@@ -1,0 +1,42 @@
+{
+  "name": "model-router",
+  "version": "0.2.0",
+  "description": "Routes each subagent to the cheapest model that fits its task: haiku for web and lookup work, sonnet for building, opus for architecture.",
+  "author": { "name": "Azrkiel" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "fallback": {
+      "type": "string",
+      "title": "Fallback model",
+      "description": "The model a general task runs on when nothing in it says which tier it is.",
+      "options": [
+        "haiku",
+        "sonnet",
+        "opus"
+      ],
+      "default": "sonnet"
+    },
+    "classifier": {
+      "type": "string",
+      "title": "Classifier",
+      "description": "rules: keywords only, free. rules+model: a small model labels the tasks the keywords cannot place.",
+      "options": [
+        "rules",
+        "rules+model"
+      ],
+      "default": "rules"
+    },
+    "nudge": {
+      "type": "boolean",
+      "title": "Delegation nudge",
+      "description": "Adds a system prompt section asking the main model to delegate self-contained work to subagents so it can be routed.",
+      "default": true
+    },
+    "escalate": {
+      "type": "boolean",
+      "title": "Escalation handoff",
+      "description": "A routed subagent that gets stuck writes a handoff report, and the model one tier up takes the task over with it.",
+      "default": true
+    }
+  }
+}

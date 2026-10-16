@@ -54,3 +54,28 @@ export const sampleBeta = (arm: Arm, random: Random) => {
 
   return Number.isFinite(x / (x + y)) ? x / (x + y) : 0.5
 }
+
+/** How much of a bucket's record each new outcome there keeps: about 33 outcomes of memory. */
+export const DECAY = 0.97
+
+const fade = (arm: Arm): Arm => ({
+  alpha: 1 + DECAY * (arm.alpha - 1),
+  beta: 1 + DECAY * (arm.beta - 1),
+})
+
+/** One outcome in a bucket: every arm there fades toward the prior, then the model's arm counts it. */
+export const observe = (
+  arms: Readonly<Record<string, Arm>>,
+  model: string,
+  isSuccess: boolean,
+): Record<string, Arm> => {
+  const faded: Record<string, Arm> = {}
+  for (const [name, arm] of Object.entries(arms)) faded[name] = fade(arm)
+  const arm = faded[model] ?? { ...PRIOR }
+  faded[model] = { alpha: arm.alpha + (isSuccess ? 1 : 0), beta: arm.beta + (isSuccess ? 0 : 1) }
+
+  return faded
+}
+
+/** The outcomes an arm still remembers. */
+export const evidenceOf = (arm: Arm) => arm.alpha + arm.beta - 2

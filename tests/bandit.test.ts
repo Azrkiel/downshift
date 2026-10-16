@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { sampleBeta } from '../hooks/bandit'
+import { evidenceOf, observe, sampleBeta } from '../hooks/bandit'
 
 // mulberry32: a seeded generator, so draws are the same on every run.
 export const seeded = (seed: number) => () => {
@@ -28,4 +28,19 @@ test('a bad shape or a broken random still answers', () => {
   expect(sampleBeta({ alpha: Number.NaN, beta: 1 }, Math.random)).toBe(0.5)
   expect(sampleBeta({ alpha: -1, beta: 1 }, Math.random)).toBe(0.5)
   expect(Number.isFinite(sampleBeta({ alpha: 2, beta: 2 }, () => Number.NaN))).toBe(true)
+})
+
+test('an outcome fades the bucket toward the prior, then counts for its model', () => {
+  const arms = observe({ haiku: { alpha: 11, beta: 1 } }, 'sonnet', true)
+  expect(arms.haiku?.alpha).toBe(1 + 0.97 * 10)
+  expect(arms.haiku?.beta).toBe(1)
+  expect(arms.sonnet).toEqual({ alpha: 2, beta: 1 })
+  expect(observe({}, 'haiku', false).haiku).toEqual({ alpha: 1, beta: 2 })
+})
+
+test('evidence saturates near 33 outcomes', () => {
+  let arms = {}
+  for (let i = 0; i < 500; i++) arms = observe(arms, 'haiku', true)
+  const seen = evidenceOf((arms as Record<string, { alpha: number; beta: number }>).haiku ?? { alpha: 1, beta: 1 })
+  expect(seen > 32 && seen < 34).toBe(true)
 })

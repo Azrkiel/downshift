@@ -61,6 +61,8 @@ The mod then starts the same agent type one tier up (haiku to sonnet, sonnet to 
 
 A run escalates once, and never above the session's own model.
 
+A worker spawned by another subagent (a phase manager in `xvant-execute`'s phase-managers mode) is routed and told the same protocol, but its handoff goes back to the agent that spawned it, which re-dispatches the task one tier up. The router can deliver a senior's answer only to the main session, and a manager needs its workers' results. A worker never runs above its parent's model.
+
 ## Learned routing
 
 The rules still place every task. The mod then keeps a record, per bucket (`scout`, `builder`, `architect`, and `open` for fallback tasks), of how each model did: an answer counts as a success, an escalation handoff as a failure. Interrupts, refusals and API errors count for nothing, and so does a run with nobody above it to hand over to, since it could only ever succeed.

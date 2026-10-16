@@ -517,3 +517,22 @@ test('with the nudge off the Agent tool keeps its own words', { options: { nudge
   const provider = { plugin: 'engine', tier: 'core' } as const
   expect((await $.tool.describe({ tool: 'Agent', description: AGENT_TOOL, provider })).description).toBe(AGENT_TOOL)
 })
+
+test('a worker under a manager hands a stuck task back to its parent', async ($, on) => {
+  const spawns: { model?: string; prompt: string }[] = []
+  on('agent.spawn', (_, e) => {
+    spawns.push({ model: e.model, prompt: e.prompt })
+
+    return { model: e.model ?? e.parentModel, agentId: `agent_${spawns.length}` }
+  })
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+
+  await $.agent.spawn(task({ parentAgentId: 'manager_1', prompt: 'Fix the retry test' }))
+  expect(spawns[0]?.prompt).toContain('the agent that spawned you')
+  expect(spawns[0]?.prompt.includes('dispatched automatically')).toBe(false)
+
+  await $.turn.complete(ended('agent_1', STUCK, SONNET))
+  // No takeover: the router cannot deliver a senior's answer to a subagent.
+  expect(spawns.length).toBe(1)
+  expect((await $.command.run(REPORT)).text).toContain('escalated')
+})

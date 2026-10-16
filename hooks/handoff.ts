@@ -1,8 +1,22 @@
 const HEADING = '## ESCALATION HANDOFF'
 const MARKER = /^##\s*ESCALATION HANDOFF\b/m
 
+/**
+ * Who takes over a stuck run: the router itself for a subagent of the main
+ * session, the spawning agent for a worker under a subagent (a phase manager),
+ * since the router can deliver a senior's answer only to the main session.
+ */
+export type Handler = 'router' | 'parent'
+
+const HANDS_OVER: Record<Handler, string> = {
+  router:
+    'Writing that heading hands the task over: the senior is dispatched automatically with your report, so nobody needs to re-dispatch it.',
+  parent:
+    'Writing that heading hands the task back to the agent that spawned you, which passes it with your report to the senior.',
+}
+
 /** What a routed subagent's prompt ends with while a stronger model is on call above it. */
-export const protocol = (senior: string) =>
+export const protocol = (senior: string, handler: Handler = 'router') =>
   [
     '',
     '---',
@@ -23,7 +37,7 @@ export const protocol = (senior: string) =>
     '### State I am leaving behind',
     '(files changed, anything half-done, anything that should be reverted)',
     '',
-    `Writing that heading hands the task over: the senior is dispatched automatically with your report, so nobody needs to re-dispatch it. Do not escalate work you can finish, and do not use it for a missing permission or a question only the user can answer: say those plainly instead.`,
+    `${HANDS_OVER[handler]} Do not escalate work you can finish, and do not use it for a missing permission or a question only the user can answer: say those plainly instead.`,
   ].join('\n')
 
 /** The junior's report, from its heading on; undefined when the answer did not escalate. */

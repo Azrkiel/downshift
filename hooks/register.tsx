@@ -68,6 +68,8 @@ type Live = {
   tookOverFrom?: string
   /** The learning bucket its outcome counts in; undefined where the router did not place it by its words. */
   bucket?: Bucket
+  /** Spawned by a subagent (a phase manager): that parent, not the router, takes over a handoff. */
+  isNested: boolean
   isHandedOver: boolean
 }
 
@@ -336,10 +338,11 @@ export const register: Register = (on, options) => {
     // A teammate idles between turns and answers by message: no handoff there.
     const senior =
       hasEscalation && e.isTeammate !== true ? seniorOf(model, e.parentModel) : undefined
+    const isNested = e.parentAgentId !== undefined
     const started = await next({
       ...e,
       model,
-      prompt: senior === undefined ? e.prompt : e.prompt + protocol(senior),
+      prompt: senior === undefined ? e.prompt : e.prompt + protocol(senior, isNested ? 'parent' : 'router'),
     })
     if (started.deny !== undefined) return started
 
@@ -352,6 +355,7 @@ export const register: Register = (on, options) => {
         parentModel: e.parentModel,
         senior,
         bucket,
+        isNested,
         isHandedOver: false,
       })
     }
@@ -413,6 +417,14 @@ export const register: Register = (on, options) => {
       await learn($, state, one.bucket, one.model, handoff === undefined)
     }
 
+    // A worker's parent reads its handoff and re-dispatches it; the router
+    // could only hand the senior's answer to the main session.
+    if (handoff !== undefined && one.isNested) {
+      one.isHandedOver = true
+
+      return done
+    }
+
     if (handoff !== undefined && one.senior !== undefined) {
       one.isHandedOver = true
       const model = one.senior
@@ -451,6 +463,7 @@ export const register: Register = (on, options) => {
           senior: above,
           tookOverFrom: one.model,
           bucket: one.bucket,
+          isNested: false,
           isHandedOver: false,
         })
       }

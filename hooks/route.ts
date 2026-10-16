@@ -59,6 +59,39 @@ const SIGNALS: Record<Tier, readonly RegExp[]> = {
   ],
 }
 
+/**
+ * Syntax that essentially cannot occur in prose: a task that carries it is
+ * code work even when no build word says so. Adapted from freellmapi
+ * (server/src/lib/task-type.ts, MIT, Copyright (c) 2026 Tashfeen Ahmed; see
+ * THIRD_PARTY_NOTICES.md), whose history is the reason none of these is a bare
+ * word: matching `class` or `function` sent "What class of animals are
+ * dolphins?" to code. Case-sensitive, so they run on the original text.
+ */
+const CODE_MARKERS: readonly RegExp[] = [
+  /```/,
+  // A shell prompt and a command-looking word; the word keeps "$ 20 per seat" out.
+  /^[ \t]*\$[ \t]+[a-z][\w./-]*(?=[ \t]|$)/m,
+  /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=/,
+  /\bfunction\s*\*?\s*[A-Za-z_$][\w$]*\s*\(/,
+  /\bdef\s+[A-Za-z_]\w*\s*\(/,
+  /^[ \t]*class\s+[A-Za-z_$][\w$]*\s*[({:]/m,
+  /\bclass\s+[A-Za-z_$][\w$]*\s+extends\s+[A-Za-z_$][\w$]*/,
+  /\bimport\s*\{/,
+  /\bimport\s[^\n;]{0,200}?\bfrom\s*['"][^'"\n]+['"]/,
+  /^[ \t]*from\s+[A-Za-z_.][\w.]*\s+import\s+\S/m,
+  /\brequire\s*\(\s*['"]/,
+  /^[ \t]*#\s*include\s*[<"]/m,
+  // A source file next to a line number: `src/router.ts:214`.
+  /\b[\w./-]+\.(?:[jt]sx?|mjs|cjs|py|rb|go|rs|java|kt|swift|php|cs|cpp|cc|hpp|sh|sql|css|scss|html|vue|svelte|ya?ml|json|toml)\s*:\s*\d+/,
+  /\b[A-Za-z_][\w./-]*\.[ch]\s*:\s*\d+/,
+  // Stack frames: V8, then Python.
+  /^\s*at\s+\S.*\(.*:\d+:\d+\)/m,
+  /^\s*File\s+"[^"\n]+",\s*line\s+\d+/m,
+  /\bTraceback\s+\(most recent call last\)/,
+]
+
+const hasCode = (text: string) => CODE_MARKERS.some(marker => marker.test(text))
+
 export type Task = {
   subagentType: string
   description: string
@@ -123,7 +156,8 @@ export const judge = (task: Task, rules?: Rules): Verdict => {
     return { isOpen: false, isLearnable: false, reason: 'its own definition decides' }
   }
 
-  const text = `${task.description}\n${task.prompt}`.slice(0, 6000).toLowerCase()
+  const original = `${task.description}\n${task.prompt}`.slice(0, 6000)
+  const text = original.toLowerCase()
   const scout = hits(text, 'scout', rules)
   const builder = hits(text, 'builder', rules)
   const architect = hits(text, 'architect', rules)
@@ -134,6 +168,9 @@ export const judge = (task: Task, rules?: Rules): Verdict => {
   }
   if (builder > 0) return { tier: 'builder', isOpen: false, isLearnable: true, reason: 'build words' }
   if (scout > 0) return { tier: 'scout', isOpen: false, isLearnable: true, reason: 'lookup words' }
+  // No words, but code: a stack trace or a `file.ts:12` is build work, and must
+  // not fall to the fallback (or to the rate-limit downshift that tasks there get).
+  if (hasCode(original)) return { tier: 'builder', isOpen: false, isLearnable: true, reason: 'code in the task' }
 
   return { isOpen: true, isLearnable: true, reason: 'no signal' }
 }

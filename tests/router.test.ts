@@ -468,3 +468,14 @@ test('the downshift can be turned off', { options: { budgetShift: false } }, asy
   await $.agent.spawn(task({ prompt: 'Implement the parser' }))
   expect(seen).toEqual(['sonnet'])
 })
+
+test('code in a task with no signal words places it with the builders', () => {
+  expect(judge(task({ prompt: 'Traceback (most recent call last):\n  File "app.py", line 3' })).tier).toBe('builder')
+  expect(judge(task({ prompt: 'See src/router.ts:214 and handle it' })).tier).toBe('builder')
+  expect(judge(task({ prompt: 'Handle this:\n```\nx = 1\n```' })).isLearnable).toBe(true)
+  // Prose that merely mentions code words is not code.
+  expect(judge(task({ prompt: 'What class of animals are dolphins?' })).isOpen).toBe(true)
+  expect(judge(task({ prompt: 'It costs\n$ 20 per seat' })).isOpen).toBe(true)
+  // Words still decide first: a lookup that quotes code stays a lookup.
+  expect(judge(task({ prompt: 'Find where `const x = 1` is set:\n```\nconst x = 1\n```' })).tier).toBe('scout')
+})

@@ -38,7 +38,8 @@ The mod hooks `agent.spawn` and sets the subagent's model before it starts.
 
 - `Explore`, `claude-code-guide` and `statusline-setup` agents go to haiku. `Plan` goes to opus.
 - `general-purpose` and `claude` agents are placed by the words in their prompt. Architecture words beat build words on a tie, and any build word beats lookup words.
-- A task with no signal goes to the fallback model (sonnet by default).
+- A task with no signal words but with code in it (a fenced block, a stack trace, `file.ts:12`, a definition) goes to sonnet. The markers are syntax only, so prose such as "what class of animals" never counts.
+- A task with no signal at all goes to the fallback model (sonnet by default).
 - The router only routes down. A sonnet session never spawns opus.
 - Forks, calls that name a `model`, and custom agents are left alone. A custom agent keeps the model in its own definition unless a rule file places it.
 
@@ -138,7 +139,7 @@ claude plugin test .
 
 `hooks/route.ts` holds the keyword rules, `hooks/handoff.ts` the escalation protocol and senior brief, `hooks/rules.ts` the rule file and prices, `hooks/bandit.ts` the Thompson sampler and the learned choice, `hooks/learnstore.ts` the learned record's file, `hooks/budget.ts` the rate-limit ladder, and `hooks/register.tsx` the hooks, commands and pane.
 
-`hooks/bandit.ts` adapts ruflo's Beta sampler under MIT; see `THIRD_PARTY_NOTICES.md`.
+`hooks/bandit.ts` adapts ruflo's Beta sampler and `hooks/route.ts` freellmapi's code markers, both under MIT; see `THIRD_PARTY_NOTICES.md`.
 
 In tests, `fs.*`, `env.get` and `agent.list` hooks answer `{ value }` (or `{ deny }`), and the plugin's paths reach them with backslashes on Windows. Any function that takes `$` must be declared at the top of its file.
 

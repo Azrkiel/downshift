@@ -1,8 +1,10 @@
 {
   "name": "model-router",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Routes each subagent to the cheapest model that fits its task: haiku for web and lookup work, sonnet for building, opus for architecture.",
-  "author": { "name": "Azrkiel" },
+  "author": {
+    "name": "Azrkiel"
+  },
   "types": "./types/index.d.ts",
   "userConfig": {
     "fallback": {
@@ -36,6 +38,23 @@
       "type": "boolean",
       "title": "Escalation handoff",
       "description": "A routed subagent that gets stuck writes a handoff report, and the model one tier up takes the task over with it.",
+      "default": true
+    },
+    "learning": {
+      "type": "string",
+      "title": "Learned routing",
+      "description": "on: each bucket's record of answers and escalations can move a task one tier, and every 10th placed task tries the tier below. shadow: the record is kept and the report says what it would pick. off: rules only.",
+      "options": [
+        "on",
+        "shadow",
+        "off"
+      ],
+      "default": "on"
+    },
+    "budgetShift": {
+      "type": "boolean",
+      "title": "Rate-limit downshift",
+      "description": "Past 75% of a rate-limit window, tasks with no signal run one tier down; past 90%, every task the router places by its words does.",
       "default": true
     }
   }

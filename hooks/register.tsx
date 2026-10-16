@@ -2,15 +2,22 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Route } from '../types'
+import { choose } from './bandit'
 import { handoffOf, protocol, seniorBrief } from './handoff'
-import { MODEL_OF, TIERS, judge, modelFor, seniorOf, tierOfModel } from './route'
+import { STATE_FILE, describe, open, record as count, reset } from './learnstore'
+import type { Bucket, Files, Store } from './learnstore'
+import { MODEL_OF, TIERS, judge, juniorOf, modelFor, seniorOf, tierOfModel } from './route'
 import type { Tier } from './route'
-import { costOf, defaults, merge, tokensOf } from './rules'
+import { costOf, defaults, merge, ratioOf, tokensOf } from './rules'
 import type { Rules } from './rules'
 
 const PLUGIN = 'model-router'
 const PANE = PLUGIN
 const RULE_FILE = '.claude/model-router.json'
+/** Every Nth placed task in a bucket may try the tier below while that tier has too little record. */
+const PROBE_EVERY = 10
+/** Outcomes one load of the mod may add per bucket: no single session can build a record alone. */
+const SESSION_CAP = 3
 
 const routes = atom({ plugin: 'model-router', key: 'routes' } as const, [])
 const isPaused = atom({ plugin: 'model-router', key: 'isPaused' } as const, false)
@@ -56,6 +63,8 @@ type Live = {
   senior?: string
   /** The model of the junior this one took over from. */
   tookOverFrom?: string
+  /** The learning bucket its outcome counts in; undefined where the router did not place it by its words. */
+  bucket?: Bucket
   isHandedOver: boolean
 }
 
@@ -96,10 +105,63 @@ const lineOf = (route: Route, width: number) => {
 const live = new Map<string, Live>()
 let loaded: Promise<Loaded> | undefined
 
+const homeOf = async ($: EngineInterface) =>
+  (await $.env.get('USERPROFILE').catch(() => undefined)) ??
+  (await $.env.get('HOME').catch(() => undefined))
+
+const filesOf = ($: EngineInterface): Files => ({
+  exists: path => $.fs.exists(path),
+  read: async path => String(await $.fs.read(path)),
+  write: (path, text) => $.fs.write(path, text),
+})
+
+/** One load's learning: the record as read, the write queue, and this load's counters. */
+type Learning = {
+  store?: Promise<Store>
+  writing: Promise<unknown>
+  /** Placed tasks per bucket, for the probe. */
+  placed: Map<Bucket, number>
+  /** Outcomes counted per bucket, for the cap. */
+  counted: Map<Bucket, number>
+}
+
+const learningState = (): Learning => ({
+  writing: Promise.resolve(),
+  placed: new Map(),
+  counted: new Map(),
+})
+
+const statePath = (home: string | undefined) => (home === undefined ? '' : `${home}/${STATE_FILE}`)
+
+const storeOf = ($: EngineInterface, state: Learning) =>
+  (state.store ??= homeOf($).then(home => open(filesOf($), statePath(home))))
+
+/** Counts a run's outcome, one write at a time, within the per-load cap. */
+const learn = async (
+  $: EngineInterface,
+  state: Learning,
+  bucket: Bucket,
+  model: string,
+  isSuccess: boolean,
+) => {
+  const seen = state.counted.get(bucket) ?? 0
+  if (seen >= SESSION_CAP) return
+  state.counted.set(bucket, seen + 1)
+  state.writing = state.writing
+    .then(async () => {
+      const before = await storeOf($, state)
+      const after = await count(filesOf($), before, bucket, model, isSuccess)
+      state.store = Promise.resolve(after)
+      if (before.isWritable && !after.isWritable) {
+        $.ui.toast(`router: learning stays in memory (${after.problem ?? 'unknown'})`)
+      }
+    })
+    .catch(() => undefined)
+  await state.writing
+}
+
 const load = async ($: EngineInterface): Promise<Loaded> => {
-  const home =
-    (await $.env.get('USERPROFILE').catch(() => undefined)) ??
-    (await $.env.get('HOME').catch(() => undefined))
+  const home = await homeOf($)
   const paths = [...(home === undefined ? [] : [`${home}/${RULE_FILE}`]), RULE_FILE]
   let rules = defaults()
   const files: string[] = []
@@ -128,12 +190,17 @@ export const register: Register = (on, options) => {
   const hasModelClassifier = options.classifier === 'rules+model'
   const hasNudge = options.nudge !== false
   const hasEscalation = options.escalate !== false
+  const learning = options.learning === 'off' || options.learning === 'shadow' ? options.learning : 'on'
+
+  // Per load, so each reload (and each test) starts with fresh counters and a
+  // freshly read record.
+  const state = learningState()
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'router',
       description:
-        'Model routing: report, `pane`, `on`, `off`, `rules`, `reload`',
+        'Model routing: report, `pane`, `on`, `off`, `rules`, `reload`, `learn`, `learn reset`',
     })
     void rulesOf($)
 
@@ -153,6 +220,19 @@ export const register: Register = (on, options) => {
       await $.ui.open({ id: PANE, title: 'Model router' })
 
       return { text: 'Model router pane opened.' }
+    }
+    if (arg === 'learn' || arg === 'learn reset') {
+      if (arg === 'learn reset') {
+        state.store = Promise.resolve(await reset(filesOf($), statePath(await homeOf($))))
+      }
+
+      return {
+        text: [
+          `Learning is ${learning}${learning === 'on' ? `, probing every ${PROBE_EVERY}th placed task while escalation is on` : ''}.`,
+          'Success rate per bucket and model, with the outcomes it rests on (older ones fade):',
+          ...describe(await storeOf($, state)),
+        ].join('\n'),
+      }
     }
     if (arg === 'reload' || arg === 'rules') {
       if (arg === 'reload') loaded = undefined
@@ -176,7 +256,7 @@ export const register: Register = (on, options) => {
     return {
       text: [
         `Model routing is ${(await read($, isPaused)) ? 'off' : 'on'}. ${summary(list)}`,
-        `Fallback ${MODEL_OF[fallback]}, classifier ${hasModelClassifier ? 'rules+model' : 'rules'}, nudge ${hasNudge ? 'on' : 'off'}, escalation ${hasEscalation ? 'on' : 'off'}.`,
+        `Fallback ${MODEL_OF[fallback]}, classifier ${hasModelClassifier ? 'rules+model' : 'rules'}, nudge ${hasNudge ? 'on' : 'off'}, escalation ${hasEscalation ? 'on' : 'off'}, learning ${learning}.`,
         'Savings are an estimate: the same tokens priced on the parent model, less what the run cost.',
         ...(list.length === 0
           ? ['No subagent routed yet.']
@@ -206,8 +286,34 @@ export const register: Register = (on, options) => {
       reason = 'fallback'
     }
 
-    const model = tier === undefined ? undefined : modelFor(tier, e.parentModel)
+    let model = tier === undefined ? undefined : modelFor(tier, e.parentModel)
     if (model === undefined) return next(e)
+
+    // Only what the router placed by its words, or by fallback, learns: a rule
+    // file, a fixed agent type or a named model is someone's choice.
+    const bucket: Bucket | undefined =
+      !verdict.isLearnable || tier === undefined ? undefined : reason === 'fallback' ? 'open' : tier
+
+    if (bucket !== undefined && learning !== 'off') {
+      const seen = (state.placed.get(bucket) ?? 0) + 1
+      state.placed.set(bucket, seen)
+      const pick = choose({
+        model,
+        junior: juniorOf(model),
+        senior: seniorOf(model, e.parentModel),
+        arms: (await storeOf($, state)).learned[bucket],
+        ratio: ratioOf(rules),
+        // A probe needs an escalation to catch it, and a teammate has none.
+        probe: learning === 'on' && hasEscalation && e.isTeammate !== true && seen % PROBE_EVERY === 0,
+        random: Math.random,
+      })
+      if (learning === 'on' && pick.reason !== undefined) {
+        model = pick.model
+        reason = pick.reason
+      } else if (pick.model !== model) {
+        reason = `${reason}; learned would pick ${pick.model}`
+      }
+    }
 
     // A teammate idles between turns and answers by message: no handoff there.
     const senior =
@@ -227,6 +333,7 @@ export const register: Register = (on, options) => {
         model,
         parentModel: e.parentModel,
         senior,
+        bucket,
         isHandedOver: false,
       })
     }
@@ -276,6 +383,18 @@ export const register: Register = (on, options) => {
     )
     $.ui.status(`router: ${summary(list)}`)
 
+    // An answer is a success, a handoff a failure; an interrupt, a refusal or
+    // an API error says nothing about the model. A run with nobody to hand
+    // over to could only ever succeed, so it says nothing either.
+    if (
+      one.bucket !== undefined &&
+      one.senior !== undefined &&
+      learning !== 'off' &&
+      e.reason === 'answer'
+    ) {
+      await learn($, state, one.bucket, one.model, handoff === undefined)
+    }
+
     if (handoff !== undefined && one.senior !== undefined) {
       one.isHandedOver = true
       const model = one.senior
@@ -313,6 +432,7 @@ export const register: Register = (on, options) => {
           parentModel: one.parentModel,
           senior: above,
           tookOverFrom: one.model,
+          bucket: one.bucket,
           isHandedOver: false,
         })
       }

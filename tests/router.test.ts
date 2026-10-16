@@ -1,9 +1,10 @@
 import { expect, test } from 'claude-code/testing'
-import type { AgentSpawnInput, TurnCompleteInput } from 'claude-code'
+import type { AgentSpawnInput, On, TurnCompleteInput } from 'claude-code'
 
 import { handoffOf, protocol, seniorBrief } from '../hooks/handoff'
 import { judge, modelFor, seniorOf } from '../hooks/route'
-import { costOf, defaults, merge } from '../hooks/rules'
+import { fresh, parse, serialize } from '../hooks/learnstore'
+import { costOf, defaults, merge, ratioOf } from '../hooks/rules'
 
 const OPUS = 'claude-opus-5-5'
 const SONNET = 'claude-sonnet-5-5'
@@ -297,4 +298,147 @@ test('a rule file cannot reach the object prototype', () => {
   expect(Object.getPrototypeOf(rules.prices)).toBe(null)
   expect(judge(task({ subagentType: 'toString', prompt: 'Scrape the web' }), rules).tier).toBe(undefined)
   expect(judge(task({ subagentType: 'constructor', prompt: 'Scrape the web' })).tier).toBe(undefined)
+})
+
+const STATE = 'C:/home/.claude/model-router-state.json'
+
+/** A fake home folder and disk under the router's `$.env` and `$.fs`; paths arrive with either slash. */
+const disk = (on: On, files: Map<string, string>) => {
+  const key = (path: string) => path.replace(/\\/g, '/')
+  on('env.get', (_, e) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : undefined }))
+  on('fs.exists', (_, e) => ({ value: files.has(key(e.path)) }))
+  on('fs.read', (_, e) => {
+    const text = files.get(key(e.path))
+
+    return text === undefined ? { deny: 'ENOENT' } : { value: text }
+  })
+  on('fs.write', (_, e) => {
+    files.set(key(e.path), e.text)
+
+    return { value: undefined }
+  })
+}
+
+const routed = (on: On) => {
+  const seen: (string | undefined)[] = []
+  on('agent.spawn', (_, e) => {
+    seen.push(e.model)
+
+    return { model: e.model ?? e.parentModel, agentId: `agent_${seen.length}` }
+  })
+
+  return seen
+}
+
+const learned = (buckets: Partial<ReturnType<typeof fresh>>) =>
+  new Map([[STATE, serialize({ ...fresh(), ...buckets })]])
+
+test('prices give the break-even ratio', () => {
+  expect(ratioOf(defaults())('haiku', 'sonnet')).toBe(0.5)
+  expect(ratioOf(merge(defaults(), '{"prices":{"sonnet":{"input":4,"output":20}}}').rules)('haiku', 'sonnet')).toBe(0.25)
+})
+
+test('a record moves a placed task down a tier', async ($, on) => {
+  disk(on, learned({ builder: { haiku: { alpha: 31, beta: 1 } } }))
+  const seen = routed(on)
+  await $.agent.spawn(task({ description: 'Build parser', prompt: 'Implement the parser' }))
+  expect(seen).toEqual(['haiku'])
+  expect((await $.command.run(REPORT)).text).toContain('learned: haiku handles these')
+})
+
+test('a record moves a placed task up a tier, within the session model', async ($, on) => {
+  disk(on, learned({ builder: { sonnet: { alpha: 1, beta: 31 } } }))
+  const seen = routed(on)
+  await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  await $.agent.spawn(task({ parentModel: SONNET, prompt: 'Implement the parser' }))
+  expect(seen).toEqual(['opus', 'sonnet'])
+})
+
+test('shadow learning keeps the rules and says what it would pick', { options: { learning: 'shadow' } }, async ($, on) => {
+  disk(on, learned({ builder: { haiku: { alpha: 31, beta: 1 } } }))
+  const seen = routed(on)
+  await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  expect(seen).toEqual(['sonnet'])
+  expect((await $.command.run(REPORT)).text).toContain('learned would pick haiku')
+})
+
+test('a pinned or fixed agent is never learned', async ($, on) => {
+  disk(on, learned({ scout: { haiku: { alpha: 1, beta: 31 } } }))
+  const seen = routed(on)
+  await $.agent.spawn(task({ subagentType: 'Explore', prompt: 'Find the config' }))
+  expect(seen).toEqual(['haiku'])
+})
+
+test('answers and handoffs are written to the record', async ($, on) => {
+  const files = new Map<string, string>()
+  disk(on, files)
+  routed(on)
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  // A spawn the plugin makes itself gets its id back from the agent list.
+  on('agent.list', () => ({ value: [
+    { id: 'agent_2', description: 'Senior takeover: ', type: 'general-purpose', status: 'running', spawnedBy: 'model-router' },
+  ] }))
+
+  await $.agent.spawn(task({ prompt: 'Fix the retry test' }))
+  await $.turn.complete(ended('agent_1', STUCK, SONNET))
+  // The senior's hand-back submits a prompt the harness has no hook for; the
+  // record is written before that, so only the record is checked here.
+  await $.turn.complete(ended('agent_2', 'Fixed: the clock was never advanced.', OPUS)).catch(() => undefined)
+
+  const saved = parse(files.get(STATE) ?? '')
+  expect('learned' in saved).toBe(true)
+  if (!('learned' in saved)) return
+  expect(saved.learned.builder.sonnet).toEqual({ alpha: 1, beta: 2 })
+  // Opus had nobody to hand over to, so its answer could not have failed: not counted.
+  expect(saved.learned.builder.opus).toBeUndefined()
+})
+
+test('a run that cannot escalate is not counted', { options: { escalate: false } }, async ($, on) => {
+  const files = new Map<string, string>()
+  disk(on, files)
+  routed(on)
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  await $.turn.complete(ended('agent_1', 'Done.', SONNET))
+  expect(files.has(STATE)).toBe(false)
+})
+
+test('one load counts at most three outcomes per bucket', async ($, on) => {
+  const files = new Map<string, string>()
+  disk(on, files)
+  routed(on)
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  for (let i = 1; i <= 4; i++) {
+    await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+    await $.turn.complete(ended(`agent_${i}`, 'Done.', SONNET))
+  }
+  const saved = parse(files.get(STATE) ?? '')
+  const sonnet = 'learned' in saved ? saved.learned.builder.sonnet : undefined
+  expect(sonnet !== undefined && Math.abs(sonnet.alpha - 1 - (1 + 0.97 + 0.97 ** 2)) < 1e-9).toBe(true)
+})
+
+test('an untrusted record file is left alone', async ($, on) => {
+  const files = new Map([[STATE, 'garbage']])
+  disk(on, files)
+  routed(on)
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  await $.turn.complete(ended('agent_1', 'Done.', SONNET))
+  expect(files.get(STATE)).toBe('garbage')
+  expect((await $.command.run({ ...REPORT, args: 'learn' })).text).toContain('not valid JSON')
+  await $.command.run({ ...REPORT, args: 'learn reset' })
+  expect(parse(files.get(STATE) ?? '')).toEqual({ learned: fresh() })
+})
+
+test('every tenth placed task in a bucket probes the tier below', async ($, on) => {
+  const seen = routed(on)
+  for (let i = 0; i < 10; i++) await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  expect(seen.filter(model => model === 'haiku').length).toBe(1)
+  expect(seen[9]).toBe('haiku')
+})
+
+test('no probe without an escalation to catch it', { options: { escalate: false } }, async ($, on) => {
+  const seen = routed(on)
+  for (let i = 0; i < 10; i++) await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  expect(seen.includes('haiku')).toBe(false)
 })

@@ -73,6 +73,8 @@ export type Verdict = {
   tier?: Tier
   /** True when the task is the router's to place and no rule placed it. */
   isOpen: boolean
+  /** True when the router placed it by its words or will by fallback: the only routes learning may move. */
+  isLearnable: boolean
   reason: string
 }
 
@@ -98,9 +100,9 @@ const hits = (text: string, tier: Tier, rules?: Rules) =>
 
 /** Places a task by its agent type, then by the words of its prompt; a rule file's entries come first. */
 export const judge = (task: Task, rules?: Rules): Verdict => {
-  if (task.fork) return { isOpen: false, reason: 'a fork inherits its parent' }
+  if (task.fork) return { isOpen: false, isLearnable: false, reason: 'a fork inherits its parent' }
   if (task.model !== undefined) {
-    return { isOpen: false, reason: `the call named ${task.model}` }
+    return { isOpen: false, isLearnable: false, reason: `the call named ${task.model}` }
   }
 
   const ruled =
@@ -108,17 +110,17 @@ export const judge = (task: Task, rules?: Rules): Verdict => {
       ? rules.agents[task.subagentType]
       : undefined
   if (ruled !== undefined && ruled !== 'classify') {
-    return { tier: ruled, isOpen: false, reason: 'rule file' }
+    return { tier: ruled, isOpen: false, isLearnable: false, reason: 'rule file' }
   }
 
   const fixed = Object.hasOwn(TIER_OF_AGENT, task.subagentType)
     ? TIER_OF_AGENT[task.subagentType]
     : undefined
   if (ruled === undefined && fixed !== undefined) {
-    return { tier: fixed, isOpen: false, reason: `${task.subagentType} agent` }
+    return { tier: fixed, isOpen: false, isLearnable: false, reason: `${task.subagentType} agent` }
   }
   if (ruled === undefined && !CLASSIFIED.has(task.subagentType)) {
-    return { isOpen: false, reason: 'its own definition decides' }
+    return { isOpen: false, isLearnable: false, reason: 'its own definition decides' }
   }
 
   const text = `${task.description}\n${task.prompt}`.slice(0, 6000).toLowerCase()
@@ -128,12 +130,12 @@ export const judge = (task: Task, rules?: Rules): Verdict => {
 
   // Ties go up: a task under-served costs more than one over-served.
   if (architect > 0 && architect >= builder) {
-    return { tier: 'architect', isOpen: false, reason: 'architecture words' }
+    return { tier: 'architect', isOpen: false, isLearnable: true, reason: 'architecture words' }
   }
-  if (builder > 0) return { tier: 'builder', isOpen: false, reason: 'build words' }
-  if (scout > 0) return { tier: 'scout', isOpen: false, reason: 'lookup words' }
+  if (builder > 0) return { tier: 'builder', isOpen: false, isLearnable: true, reason: 'build words' }
+  if (scout > 0) return { tier: 'scout', isOpen: false, isLearnable: true, reason: 'lookup words' }
 
-  return { isOpen: true, reason: 'no signal' }
+  return { isOpen: true, isLearnable: true, reason: 'no signal' }
 }
 
 /** Where a model sits among the families; one the router does not know outranks them all. */
@@ -150,6 +152,10 @@ export const seniorOf = (model: string, parentModel: string) => {
 
   return senior === undefined || rank(senior) > rank(parentModel) ? undefined : senior
 }
+
+/** The model one tier below, for a probe or a learned route; undefined at the bottom. */
+export const juniorOf = (model: string) =>
+  TIERS.map(tier => MODEL_OF[tier]).find(one => rank(one) === rank(model) - 1)
 
 export const tierOfModel = (model: string): Tier | undefined =>
   TIERS.find(tier => MODEL_OF[tier] === model)

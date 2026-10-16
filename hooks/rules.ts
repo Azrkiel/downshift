@@ -126,3 +126,11 @@ export const costOf = (usage: ModelUsage, model: string, rules: Rules) => {
     1_000_000
   )
 }
+
+/** What `cheap` costs as a share of `dear`, by input price; 0.5 where either has no price. */
+export const ratioOf = (rules: Rules) => (cheap: string, dear: string) => {
+  const a = rules.prices[cheap]?.input
+  const b = rules.prices[dear]?.input
+
+  return a === undefined || b === undefined || b <= 0 ? 0.5 : Math.min(1, Math.max(0, a / b))
+}

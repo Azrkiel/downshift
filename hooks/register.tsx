@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Route } from '../types'
 import { choose } from './bandit'
 import { CRITICAL, TIGHT, isRaised, rungOf, shiftsDown } from './budget'
+import { delegating } from './delegate'
 import type { Rung } from './budget'
 import { handoffOf, protocol, seniorBrief } from './handoff'
 import { STATE_FILE, describe, open, record as count, reset } from './learnstore'
@@ -219,6 +220,8 @@ export const register: Register = (on, options) => {
     if (arg === 'off' || arg === 'on') {
       await update($, isPaused, () => arg === 'off')
       $.ui.status(arg === 'off' ? 'router: paused' : undefined)
+      // The Agent tool's wording follows the pause from the next turn.
+      $.ui.invalidate('tool.describe')
 
       return { text: `Model routing is ${arg}.` }
     }
@@ -495,6 +498,15 @@ export const register: Register = (on, options) => {
     }
 
     return result
+  })
+
+  // Claude Code's Agent tool forbids unasked spawns, which outranks the nudge
+  // and leaves nothing to route; the user's install is the ask.
+  on('tool.describe', { tool: 'Agent' }, async ($, e, next) => {
+    const described = await next(e)
+    if (!hasNudge || (await read($, isPaused))) return described
+
+    return { ...described, description: delegating(described.description) }
   })
 
   on('prompt.compose', async ($, e, next) => {

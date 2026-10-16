@@ -20,10 +20,12 @@ export type Rules = {
   prices: Record<string, Price>
 }
 
-// First-party API list prices; a rule file's `prices` replaces a family's.
+// First-party API list prices (Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.1;
+// checked 2026-10-16); a rule file's `prices` replaces a family's. Haiku 5.5
+// costs five times this on prompts over 100K tokens, which a subagent rarely sends.
 const PRICES: Record<string, Price> = {
-  haiku: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
-  sonnet: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  haiku: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+  sonnet: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
   opus: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
   fable: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
 }

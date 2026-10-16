@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { AgentSpawnInput, On, TurnCompleteInput } from 'claude-code'
 
+import { delegating } from '../hooks/delegate'
 import { handoffOf, protocol, seniorBrief } from '../hooks/handoff'
 import { judge, modelFor, seniorOf } from '../hooks/route'
 import { fresh, parse, serialize } from '../hooks/learnstore'
@@ -152,7 +153,7 @@ test('/router off pauses routing and on resumes it', async ($, on) => {
 
   expect(seen).toEqual([undefined, 'haiku'])
   expect((await $.command.run(REPORT)).text).toContain('haiku 1')
-  expect((await $.command.run({ ...REPORT, args: 'rules' })).text).toContain('haiku 1/5')
+  expect((await $.command.run({ ...REPORT, args: 'rules' })).text).toContain('haiku 0.1/0.5')
 })
 
 test('the fallback option decides a task with no signal', { options: { fallback: 'haiku' } }, async ($, on) => {
@@ -334,8 +335,9 @@ const learned = (buckets: Partial<ReturnType<typeof fresh>>) =>
   new Map([[STATE, serialize({ ...fresh(), ...buckets })]])
 
 test('prices give the break-even ratio', () => {
-  expect(ratioOf(defaults())('haiku', 'sonnet')).toBe(0.5)
-  expect(ratioOf(merge(defaults(), '{"prices":{"sonnet":{"input":4,"output":20}}}').rules)('haiku', 'sonnet')).toBe(0.25)
+  expect(ratioOf(defaults())('haiku', 'sonnet')).toBe(0.05)
+  expect(ratioOf(defaults())('sonnet', 'opus')).toBe(0.5)
+  expect(ratioOf(merge(defaults(), '{"prices":{"sonnet":{"input":4,"output":20}}}').rules)('haiku', 'sonnet')).toBe(0.025)
 })
 
 test('a record moves a placed task down a tier', async ($, on) => {
@@ -478,4 +480,40 @@ test('code in a task with no signal words places it with the builders', () => {
   expect(judge(task({ prompt: 'It costs\n$ 20 per seat' })).isOpen).toBe(true)
   // Words still decide first: a lookup that quotes code stays a lookup.
   expect(judge(task({ prompt: 'Find where `const x = 1` is set:\n```\nconst x = 1\n```' })).tier).toBe('scout')
+})
+
+test('Haiku is priced as Haiku 5.5', () => {
+  // 1M input at $0.10 and 100k output at $0.50 per million.
+  expect(Math.abs((costOf(usage('claude-haiku-5-5'), 'claude-haiku-5-5', defaults()) ?? 0) - 0.15) < 1e-9).toBe(true)
+})
+
+const AGENT_TOOL = [
+  'Launch a new agent to handle complex, multi-step tasks.',
+  '',
+  '**Do not spawn agents unless the user asks.** Each spawn starts cold. Only use this tool when the user explicitly says to use a subagent, or names one of the available agent types.',
+  '',
+  'When using the Agent tool, specify a subagent_type.',
+].join('\n')
+
+test('the Agent tool asks for delegation instead of forbidding it', () => {
+  const text = delegating(AGENT_TOOL)
+  expect(text.includes('Do not spawn agents unless the user asks')).toBe(false)
+  expect(text.includes('Only use this tool when the user explicitly says')).toBe(false)
+  expect(text).toContain('model-router')
+  expect(text).toContain('When using the Agent tool, specify a subagent_type.')
+  // A description without the rule gets the policy added, not lost.
+  expect(delegating('Launch a new agent.')).toContain('model-router')
+})
+
+test('the router rewrites only the Agent tool, and only with the nudge on', async ($, on) => {
+  on('tool.describe', (_, e) => ({ description: e.description }))
+  const provider = { plugin: 'engine', tier: 'core' } as const
+  expect((await $.tool.describe({ tool: 'Agent', description: AGENT_TOOL, provider })).description).toContain('model-router')
+  expect((await $.tool.describe({ tool: 'Bash', description: AGENT_TOOL, provider })).description).toBe(AGENT_TOOL)
+})
+
+test('with the nudge off the Agent tool keeps its own words', { options: { nudge: false } }, async ($, on) => {
+  on('tool.describe', (_, e) => ({ description: e.description }))
+  const provider = { plugin: 'engine', tier: 'core' } as const
+  expect((await $.tool.describe({ tool: 'Agent', description: AGENT_TOOL, provider })).description).toBe(AGENT_TOOL)
 })

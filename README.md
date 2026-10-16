@@ -65,7 +65,7 @@ A run escalates once, and never above the session's own model.
 
 The rules still place every task. The mod then keeps a record, per bucket (`scout`, `builder`, `architect`, and `open` for fallback tasks), of how each model did: an answer counts as a success, an escalation handoff as a failure. Interrupts, refusals and API errors count for nothing, and so does a run with nobody above it to hand over to, since it could only ever succeed.
 
-- Once a model has about five outcomes in a bucket, the record can move a task **one tier**: down when the cheaper model succeeds often enough to pay for its escalations (by the price table, plus a 15-point margin), up when the rules' model escalates so often that going straight to the senior is cheaper. Never above the session's model.
+- Once a model has about five outcomes in a bucket, the record can move a task **one tier**: down when the cheaper model succeeds often enough to pay for its escalations (by the price table, plus a 15-point margin, and at least 70% of the time, since every escalation costs a second run's wait), up when the rules' model escalates so often that going straight to the senior is cheaper. Never above the session's model.
 - Every 10th placed task in a bucket tries the tier below while that tier has too little record, and only while escalation is on to catch it.
 - Old outcomes fade (about the last 33 count), so the record follows model changes.
 - Rule-file pins, `Explore`/`Plan`, custom agents and calls that name a model are never moved.
@@ -101,12 +101,12 @@ Set these in `/config`.
 | --- | --- | --- |
 | `fallback` | `sonnet` | The model for a general task with no signal |
 | `classifier` | `rules` | `rules` uses keywords only. `rules+model` asks a small model to label tasks the keywords cannot place |
-| `nudge` | on | Adds a system prompt section asking the main model to delegate self-contained work |
+| `nudge` | on | Asks the main model to delegate self-contained work: a system prompt section, and the Agent tool's "do not spawn agents unless the user asks" rule replaced by that request |
 | `escalate` | on | The escalation handoff described above |
 | `learning` | `on` | `on`, `shadow` or `off`; see Learned routing |
 | `budgetShift` | on | The rate-limit downshift |
 
-With `nudge` on, the main model delegates more than it otherwise would, and each subagent starts cold. Turn it off to route only the spawns that already happen.
+Routing only reaches subagents: whatever the main model does itself runs on the session's model. Claude Code's own Agent tool description tells the main model not to spawn agents unless the user asks, and that rule outranks a system prompt section. Before the mod rewrote it, 362 sessions (test runs included) held 19 spawns in all. With `nudge` on, the main model delegates more, and each subagent starts cold. Turn it off to route only the spawns that already happen.
 
 ## Rule file
 

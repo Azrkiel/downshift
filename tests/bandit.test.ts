@@ -67,3 +67,11 @@ test('a record moves a route one tier, never two', () => {
   // Four outcomes are not enough to move anything.
   expect(choose({ ...base, arms: { haiku: { alpha: 5, beta: 1 } } }).model).toBe('sonnet')
 })
+
+test('a cheap junior still has to succeed most of the time', () => {
+  // At Haiku 5.5's price the break-even is 5%; a 25% success rate pays on
+  // price alone, but three escalations in four cost the user too much time.
+  const base = { model: 'sonnet', junior: 'haiku', senior: 'opus', ratio: () => 0.05, probe: false, random: seeded(3) }
+  expect(choose({ ...base, arms: { haiku: { alpha: 9, beta: 25 } } }).model).toBe('sonnet')
+  expect(choose({ ...base, arms: { haiku: { alpha: 30, beta: 3 } } }).model).toBe('haiku')
+})

@@ -86,6 +86,14 @@ export const MIN_EVIDENCE = 5
 /** How far past break-even a cheaper model must look: an escalation costs time as well as tokens. */
 export const MARGIN = 0.15
 
+/**
+ * The success rate a cheaper model needs whatever its price: each escalation
+ * costs the user a second run's wait, which no price counts. At Haiku 5.5's
+ * price the break-even alone would hand sonnet's work to a haiku that
+ * escalates three times in four.
+ */
+export const FLOOR = 0.7
+
 export type Choice = { model: string; reason?: string }
 
 export type ChooseInput = {
@@ -110,7 +118,7 @@ export type ChooseInput = {
  * Up: running `model` and paying for its escalations costs more than going
  * straight to the senior once p(success) < ratio(model, senior).
  * Down: the junior pays for itself once p(success) > ratio(junior, model),
- * and must clear MARGIN besides.
+ * and must clear MARGIN besides, and FLOOR.
  */
 export const choose = (input: ChooseInput): Choice => {
   const { model, junior, senior, arms, ratio, probe, random } = input
@@ -127,7 +135,7 @@ export const choose = (input: ChooseInput): Choice => {
 
   const below = arms[junior]
   if (below !== undefined && evidenceOf(below) >= MIN_EVIDENCE) {
-    return sampleBeta(below, random) > ratio(junior, model) + MARGIN
+    return sampleBeta(below, random) > Math.max(ratio(junior, model) + MARGIN, FLOOR)
       ? { model: junior, reason: `learned: ${junior} handles these` }
       : { model }
   }

@@ -79,3 +79,58 @@ export const observe = (
 
 /** The outcomes an arm still remembers. */
 export const evidenceOf = (arm: Arm) => arm.alpha + arm.beta - 2
+
+/** Outcomes an arm needs before its record can move a route. */
+export const MIN_EVIDENCE = 5
+
+/** How far past break-even a cheaper model must look: an escalation costs time as well as tokens. */
+export const MARGIN = 0.15
+
+export type Choice = { model: string; reason?: string }
+
+export type ChooseInput = {
+  /** The rules' model. */
+  model: string
+  /** One tier down; undefined at the bottom. */
+  junior?: string
+  /** One tier up within the session's model; undefined where there is none. */
+  senior?: string
+  arms: Readonly<Record<string, Arm>>
+  /** What `cheap` costs as a share of `dear`. */
+  ratio: (cheap: string, dear: string) => number
+  /** Whether this route may try a junior that has too little record. */
+  probe: boolean
+  random: Random
+}
+
+/**
+ * The model a placed task runs on: the rules' pick, unless the bucket's
+ * record says the tier above or below is the better buy.
+ *
+ * Up: running `model` and paying for its escalations costs more than going
+ * straight to the senior once p(success) < ratio(model, senior).
+ * Down: the junior pays for itself once p(success) > ratio(junior, model),
+ * and must clear MARGIN besides.
+ */
+export const choose = (input: ChooseInput): Choice => {
+  const { model, junior, senior, arms, ratio, probe, random } = input
+  const own = arms[model]
+  if (
+    senior !== undefined &&
+    own !== undefined &&
+    evidenceOf(own) >= MIN_EVIDENCE &&
+    sampleBeta(own, random) < ratio(model, senior)
+  ) {
+    return { model: senior, reason: `learned: ${model} escalates these` }
+  }
+  if (junior === undefined) return { model }
+
+  const below = arms[junior]
+  if (below !== undefined && evidenceOf(below) >= MIN_EVIDENCE) {
+    return sampleBeta(below, random) > ratio(junior, model) + MARGIN
+      ? { model: junior, reason: `learned: ${junior} handles these` }
+      : { model }
+  }
+
+  return probe ? { model: junior, reason: `probe: trying ${junior}` } : { model }
+}

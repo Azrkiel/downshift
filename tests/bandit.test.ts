@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { evidenceOf, observe, sampleBeta } from '../hooks/bandit'
+import { choose, evidenceOf, observe, sampleBeta } from '../hooks/bandit'
 
 // mulberry32: a seeded generator, so draws are the same on every run.
 export const seeded = (seed: number) => () => {
@@ -43,4 +43,27 @@ test('evidence saturates near 33 outcomes', () => {
   for (let i = 0; i < 500; i++) arms = observe(arms, 'haiku', true)
   const seen = evidenceOf((arms as Record<string, { alpha: number; beta: number }>).haiku ?? { alpha: 1, beta: 1 })
   expect(seen > 32 && seen < 34).toBe(true)
+})
+
+const HALF = () => 0.5
+
+test('with no record the rules decide, apart from a probe', () => {
+  const base = { model: 'sonnet', junior: 'haiku', senior: 'opus', arms: {}, ratio: () => 0.5, random: seeded(1) }
+  expect(choose({ ...base, probe: false })).toEqual({ model: 'sonnet' })
+  expect(choose({ ...base, probe: true })).toEqual({ model: 'haiku', reason: 'probe: trying haiku' })
+  expect(choose({ ...base, junior: undefined, probe: true })).toEqual({ model: 'sonnet' })
+})
+
+test('a record moves a route one tier, never two', () => {
+  const base = { model: 'sonnet', junior: 'haiku', senior: 'opus', ratio: HALF, probe: false, random: seeded(2) }
+  expect(choose({ ...base, arms: { haiku: { alpha: 31, beta: 1 } } }).model).toBe('haiku')
+  expect(choose({ ...base, arms: { haiku: { alpha: 2, beta: 30 } } }).model).toBe('sonnet')
+  expect(choose({ ...base, arms: { sonnet: { alpha: 1, beta: 31 } } })).toEqual({
+    model: 'opus',
+    reason: 'learned: sonnet escalates these',
+  })
+  // No senior within the session's model: a failing record stays put.
+  expect(choose({ ...base, senior: undefined, arms: { sonnet: { alpha: 1, beta: 31 } } }).model).toBe('sonnet')
+  // Four outcomes are not enough to move anything.
+  expect(choose({ ...base, arms: { haiku: { alpha: 5, beta: 1 } } }).model).toBe('sonnet')
 })

@@ -76,9 +76,25 @@ export type Verdict = {
   reason: string
 }
 
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** A rule-file phrase as a pattern that finds it only as whole words: `adr` finds "adr" but not "address". */
+export const wordPattern = (phrase: string) =>
+  new RegExp(`(?<![a-z0-9])${escape(phrase)}(?![a-z0-9])`)
+
+const patterns = new Map<string, RegExp>()
+const patternOf = (phrase: string) => {
+  const known = patterns.get(phrase)
+  if (known !== undefined) return known
+  const made = wordPattern(phrase)
+  patterns.set(phrase, made)
+
+  return made
+}
+
 const hits = (text: string, tier: Tier, rules?: Rules) =>
   SIGNALS[tier].filter(signal => signal.test(text)).length +
-  (rules?.keywords[tier].filter(word => text.includes(word)).length ?? 0)
+  (rules?.keywords[tier].filter(word => patternOf(word).test(text)).length ?? 0)
 
 /** Places a task by its agent type, then by the words of its prompt; a rule file's entries come first. */
 export const judge = (task: Task, rules?: Rules): Verdict => {

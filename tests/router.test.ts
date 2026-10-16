@@ -281,3 +281,10 @@ test('the pane lists the routes on every surface', async ($, on) => {
     await ui.unmount()
   }
 })
+
+test('a rule-file keyword matches whole words only', () => {
+  const { rules } = merge(defaults(), JSON.stringify({ keywords: { architect: ['adr', 'wire up'] } }))
+  expect(judge(task({ prompt: 'Look up the address' }), rules).tier).toBe('scout')
+  expect(judge(task({ prompt: 'Write an ADR for the queue' }), rules).tier).toBe('architect')
+  expect(judge(task({ prompt: 'Look up the wire uploader' }), rules).tier).toBe('scout')
+})

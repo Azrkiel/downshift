@@ -380,7 +380,7 @@ export const register: Register = (on, options) => {
     // An escalated run bought a report, not the task: its cost is the loss.
     const saved = handoff !== undefined ? -cost : base === undefined ? 0 : base - cost
     const tokens = e.usage === undefined ? 0 : tokensOf(e.usage)
-    const status =
+    const status: Route['status'] =
       handoff !== undefined ? 'escalated' : e.reason === 'answer' ? 'done' : 'failed'
 
     const list = await update($, routes, all =>

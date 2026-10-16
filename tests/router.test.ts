@@ -442,3 +442,29 @@ test('no probe without an escalation to catch it', { options: { escalate: false 
   for (let i = 0; i < 10; i++) await $.agent.spawn(task({ prompt: 'Implement the parser' }))
   expect(seen.includes('haiku')).toBe(false)
 })
+
+const measure = (percentUsed: number) => ({
+  context: { window: 200_000 },
+  rateLimits: [{ kind: 'five_hour', percentUsed }],
+  changed: ['rateLimits' as const],
+})
+
+test('a nearly spent window moves placed tasks a tier down', async ($, on) => {
+  const seen = routed(on)
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+  await $.session.measure(measure(80))
+  await $.agent.spawn(task({ prompt: 'Handle it.' }))
+  await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  await $.session.measure(measure(95))
+  await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  await $.agent.spawn(task({ subagentType: 'Plan', prompt: 'Plan it' }))
+  expect(seen).toEqual(['haiku', 'sonnet', 'haiku', 'opus'])
+})
+
+test('the downshift can be turned off', { options: { budgetShift: false } }, async ($, on) => {
+  const seen = routed(on)
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+  await $.session.measure(measure(95))
+  await $.agent.spawn(task({ prompt: 'Implement the parser' }))
+  expect(seen).toEqual(['sonnet'])
+})

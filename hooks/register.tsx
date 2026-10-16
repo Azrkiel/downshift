@@ -3,6 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Route } from '../types'
 import { choose } from './bandit'
+import { CRITICAL, TIGHT, isRaised, rungOf, shiftsDown } from './budget'
+import type { Rung } from './budget'
 import { handoffOf, protocol, seniorBrief } from './handoff'
 import { STATE_FILE, describe, open, record as count, reset } from './learnstore'
 import type { Bucket, Files, Store } from './learnstore'
@@ -195,6 +197,10 @@ export const register: Register = (on, options) => {
   // Per load, so each reload (and each test) starts with fresh counters and a
   // freshly read record.
   const state = learningState()
+  const hasBudgetShift = options.budgetShift !== false
+  // The fullest rate-limit window's rung, and the highest one announced since it was last ok.
+  let rung: Rung = 'ok'
+  let told: Rung = 'ok'
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -312,6 +318,15 @@ export const register: Register = (on, options) => {
         reason = pick.reason
       } else if (pick.model !== model) {
         reason = `${reason}; learned would pick ${pick.model}`
+      }
+    }
+
+    // Last, so a learned move up never outlasts a nearly spent window.
+    if (bucket !== undefined && hasBudgetShift && shiftsDown(rung, bucket)) {
+      const lower = juniorOf(model)
+      if (lower !== undefined) {
+        model = lower
+        reason = `${reason}; rate limit ${rung}`
       }
     }
 
@@ -463,6 +478,23 @@ export const register: Register = (on, options) => {
     }
 
     return done
+  })
+
+  on('session.measure', async ($, e, next) => {
+    const result = await next(e)
+    if (!hasBudgetShift) return result
+    rung = rungOf(e.rateLimits)
+    if (rung === 'ok') told = 'ok'
+    if (isRaised(told, rung)) {
+      told = rung
+      $.ui.toast(
+        rung === 'critical'
+          ? `router: a rate-limit window is past ${CRITICAL}%; every placed task runs a tier down`
+          : `router: a rate-limit window is past ${TIGHT}%; tasks with no signal run a tier down`,
+      )
+    }
+
+    return result
   })
 
   on('prompt.compose', async ($, e, next) => {

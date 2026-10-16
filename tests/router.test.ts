@@ -288,3 +288,13 @@ test('a rule-file keyword matches whole words only', () => {
   expect(judge(task({ prompt: 'Write an ADR for the queue' }), rules).tier).toBe('architect')
   expect(judge(task({ prompt: 'Look up the wire uploader' }), rules).tier).toBe('scout')
 })
+
+test('a rule file cannot reach the object prototype', () => {
+  const { rules } = merge(
+    defaults(),
+    '{"agents":{"__proto__":"haiku"},"prices":{"__proto__":{"input":0,"output":0}}}',
+  )
+  expect(Object.getPrototypeOf(rules.prices)).toBe(null)
+  expect(judge(task({ subagentType: 'toString', prompt: 'Scrape the web' }), rules).tier).toBe(undefined)
+  expect(judge(task({ subagentType: 'constructor', prompt: 'Scrape the web' })).tier).toBe(undefined)
+})

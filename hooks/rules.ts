@@ -28,10 +28,14 @@ const PRICES: Record<string, Price> = {
   fable: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
 }
 
+/** A record with no prototype, so a key like `__proto__` or `toString` is only ever a key. */
+const bare = <T>(from: Record<string, T>): Record<string, T> =>
+  Object.assign(Object.create(null) as Record<string, T>, from)
+
 export const defaults = (): Rules => ({
-  agents: {},
+  agents: bare({}),
   keywords: { scout: [], builder: [], architect: [] },
-  prices: { ...PRICES },
+  prices: bare(PRICES),
 })
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -57,13 +61,13 @@ const priceOf = (value: unknown): Price | undefined => {
 export const merge = (base: Rules, json: string): { rules: Rules; problems: string[] } => {
   const problems: string[] = []
   const rules: Rules = {
-    agents: { ...base.agents },
+    agents: bare(base.agents),
     keywords: {
       scout: [...base.keywords.scout],
       builder: [...base.keywords.builder],
       architect: [...base.keywords.architect],
     },
-    prices: { ...base.prices },
+    prices: bare(base.prices),
   }
 
   let file: unknown

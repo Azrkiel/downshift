@@ -103,12 +103,17 @@ export const judge = (task: Task, rules?: Rules): Verdict => {
     return { isOpen: false, reason: `the call named ${task.model}` }
   }
 
-  const ruled = rules?.agents[task.subagentType]
+  const ruled =
+    rules !== undefined && Object.hasOwn(rules.agents, task.subagentType)
+      ? rules.agents[task.subagentType]
+      : undefined
   if (ruled !== undefined && ruled !== 'classify') {
     return { tier: ruled, isOpen: false, reason: 'rule file' }
   }
 
-  const fixed = TIER_OF_AGENT[task.subagentType]
+  const fixed = Object.hasOwn(TIER_OF_AGENT, task.subagentType)
+    ? TIER_OF_AGENT[task.subagentType]
+    : undefined
   if (ruled === undefined && fixed !== undefined) {
     return { tier: fixed, isOpen: false, reason: `${task.subagentType} agent` }
   }

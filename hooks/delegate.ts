@@ -21,5 +21,5 @@ const ONLY_WHEN_ASKED = /\s*Only use this tool when the user explicitly says[^.\
 export const delegating = (description: string) => {
   const freed = description.replace(ONLY_WHEN_ASKED, '')
 
-  return RULE.test(freed) ? freed.replace(RULE, POLICY) : `${freed}\n\n${POLICY}`
+  return RULE.test(freed) ? freed.replace(RULE, POLICY) : [freed, POLICY].join('\n\n')
 }

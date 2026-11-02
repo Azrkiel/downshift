@@ -17,6 +17,6 @@ export type Route = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'model-router': { routes: Route[]; isPaused: boolean }
+    'downshift': { routes: Route[]; isPaused: boolean }
   }
 }

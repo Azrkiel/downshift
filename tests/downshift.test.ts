@@ -41,7 +41,7 @@ const ended = (agentId: string, answer: string, model: string): TurnCompleteInpu
 })
 
 const REPORT = {
-  command: 'router',
+  command: 'downshift',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: false, columns: 120 },
@@ -72,7 +72,7 @@ test('the rules leave alone what is not theirs', () => {
   expect(judge(task({ subagentType: 'Plan', prompt: 'anything' })).tier).toBe('architect')
 })
 
-test('the router only routes down, and escalates one tier at a time', () => {
+test('the mod only routes down, and escalates one tier at a time', () => {
   expect(modelFor('architect', SONNET)).toBeUndefined()
   expect(modelFor('scout', SONNET)).toBe('haiku')
   expect(modelFor('architect', 'claude-fable-5-1')).toBe('opus')
@@ -138,7 +138,7 @@ test('a spawn runs on the model its task fits', async ($, on) => {
   expect(seen).toEqual(['haiku', 'sonnet', 'sonnet', undefined, undefined])
 })
 
-test('/router off pauses routing and on resumes it', async ($, on) => {
+test('/downshift off pauses routing and on resumes it', async ($, on) => {
   const seen: (string | undefined)[] = []
   on('agent.spawn', (_, e) => {
     seen.push(e.model)
@@ -263,12 +263,12 @@ test('the pane lists the routes on every surface', async ($, on) => {
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({
-      plugin: 'model-router',
+      plugin: 'downshift',
       surface,
       component: 'Pane',
-      requestId: 'model-router',
+      requestId: 'downshift',
       props: {
-        title: 'Model router',
+        title: 'Downshift',
         isFocused: false,
         bodyColumns: 60,
         placement: 'dock',
@@ -301,9 +301,9 @@ test('a rule file cannot reach the object prototype', () => {
   expect(judge(task({ subagentType: 'constructor', prompt: 'Scrape the web' })).tier).toBe(undefined)
 })
 
-const STATE = 'C:/home/.claude/model-router-state.json'
+const STATE = 'C:/home/.claude/downshift-state.json'
 
-/** A fake home folder and disk under the router's `$.env` and `$.fs`; paths arrive with either slash. */
+/** A fake home folder and disk under the mod's `$.env` and `$.fs`; paths arrive with either slash. */
 const disk = (on: On, files: Map<string, string>) => {
   const key = (path: string) => path.replace(/\\/g, '/')
   on('env.get', (_, e) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : undefined }))
@@ -386,7 +386,7 @@ test('answers and handoffs are written to the record', async ($, on) => {
   on('turn.complete', (_, e) => ({ text: e.answer }))
   // A spawn the plugin makes itself gets its id back from the agent list.
   on('agent.list', () => ({ value: [
-    { id: 'agent_2', description: 'Senior takeover: ', type: 'general-purpose', status: 'running', spawnedBy: 'model-router' },
+    { id: 'agent_2', description: 'Senior takeover: ', type: 'general-purpose', status: 'running', spawnedBy: 'downshift' },
   ] }))
 
   await $.agent.spawn(task({ prompt: 'Fix the retry test' }))
@@ -656,7 +656,7 @@ test('a nearly spent window moves placed tasks a tier down', async ($, on) => {
   expect(seen).toEqual(['haiku', 'sonnet', 'haiku', 'opus'])
 })
 
-test('the downshift can be turned off', { options: { budgetShift: false } }, async ($, on) => {
+test('rate-limit protection can be turned off', { options: { budgetShift: false } }, async ($, on) => {
   const seen = routed(on)
   on('session.measure', (_, e) => ({ changed: e.changed }))
   await $.session.measure(measure(95))
@@ -692,16 +692,16 @@ test('the Agent tool asks for delegation instead of forbidding it', () => {
   const text = delegating(AGENT_TOOL)
   expect(text.includes('Do not spawn agents unless the user asks')).toBe(false)
   expect(text.includes('Only use this tool when the user explicitly says')).toBe(false)
-  expect(text).toContain('model-router')
+  expect(text).toContain('downshift')
   expect(text).toContain('When using the Agent tool, specify a subagent_type.')
   // A description without the rule gets the policy added, not lost.
-  expect(delegating('Launch a new agent.')).toContain('model-router')
+  expect(delegating('Launch a new agent.')).toContain('downshift')
 })
 
-test('the router rewrites only the Agent tool, and only with the nudge on', async ($, on) => {
+test('the mod rewrites only the Agent tool, and only with the nudge on', async ($, on) => {
   on('tool.describe', (_, e) => ({ description: e.description }))
   const provider = { plugin: 'engine', tier: 'core' } as const
-  expect((await $.tool.describe({ tool: 'Agent', description: AGENT_TOOL, provider })).description).toContain('model-router')
+  expect((await $.tool.describe({ tool: 'Agent', description: AGENT_TOOL, provider })).description).toContain('downshift')
   expect((await $.tool.describe({ tool: 'Bash', description: AGENT_TOOL, provider })).description).toBe(AGENT_TOOL)
 })
 
@@ -725,7 +725,7 @@ test('a worker under a manager hands a stuck task back to its parent', async ($,
   expect(spawns[0]?.prompt.includes('dispatched automatically')).toBe(false)
 
   await $.turn.complete(ended('agent_1', STUCK, SONNET))
-  // No takeover: the router cannot deliver a senior's answer to a subagent.
+  // No takeover: the mod cannot deliver a senior's answer to a subagent.
   expect(spawns.length).toBe(1)
   expect((await $.command.run(REPORT)).text).toContain('escalated')
 })

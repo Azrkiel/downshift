@@ -1,6 +1,8 @@
-# model-router
+# downshift
 
-model-router is a Claude Code mod that runs each subagent on the cheapest model suited to its task, so the same work uses less of your budget or rate limits.
+**Model routing for Claude Code.**
+
+downshift is a Claude Code mod that runs each subagent on the cheapest model suited to its task, so the same work uses less of your budget or rate limits.
 
 ## Features
 
@@ -15,8 +17,8 @@ model-router is a Claude Code mod that runs each subagent on the cheapest model 
 
 ## How it works
 
-1. **Claude starts a subagent.** model-router encourages Claude to delegate self-contained work, so more of it can run on cheaper models.
-2. **model-router picks a model.** It looks at the agent type and the wording of the task, then chooses the cheapest model that fits. A subagent never runs on a stronger model than the agent that started it.
+1. **Claude starts a subagent.** downshift encourages Claude to delegate self-contained work, so more of it can run on cheaper models.
+2. **downshift picks a model.** It looks at the agent type and the wording of the task, then chooses the cheapest model that fits. A subagent never runs on a stronger model than the agent that started it.
 3. **The subagent does the work.** If it gets stuck, it writes up what it tried and found, and the next model up takes over from there.
-4. **model-router records the result.** A finished task counts in the model's favor. An escalation, or the same task being sent again, counts against it.
+4. **downshift records the result.** A finished task counts in the model's favor. An escalation, or the same task being sent again, counts against it.
 5. **Future tasks benefit.** Work moves to a stronger model when a model keeps struggling with it, and to a cheaper model when that model proves reliable. Build work stays on Sonnet or above unless you are close to a rate limit.

@@ -104,9 +104,9 @@ export type Task = {
 export type Verdict = {
   /** The tier the rules placed the task in; absent when they left it alone or found no signal. */
   tier?: Tier
-  /** True when the task is the router's to place and no rule placed it. */
+  /** True when the task is the mod's to place and no rule placed it. */
   isOpen: boolean
-  /** True when the router placed it by its words or will by fallback: the only routes learning may move. */
+  /** True when the mod placed it by its words or will by fallback: the only routes learning may move. */
   isLearnable: boolean
   reason: string
 }
@@ -169,17 +169,17 @@ export const judge = (task: Task, rules?: Rules): Verdict => {
   if (builder > 0) return { tier: 'builder', isOpen: false, isLearnable: true, reason: 'build words' }
   if (scout > 0) return { tier: 'scout', isOpen: false, isLearnable: true, reason: 'lookup words' }
   // No words, but code: a stack trace or a `file.ts:12` is build work, and must
-  // not fall to the fallback (or to the rate-limit downshift that tasks there get).
+  // not fall to the fallback (or to the rate-limit protection that tasks there get).
   if (hasCode(original)) return { tier: 'builder', isOpen: false, isLearnable: true, reason: 'code in the task' }
 
   return { isOpen: true, isLearnable: true, reason: 'no signal' }
 }
 
-/** Where a model sits among the families; one the router does not know outranks them all. */
+/** Where a model sits among the families; one the mod does not know outranks them all. */
 export const rank = (model: string) =>
   /haiku/i.test(model) ? 1 : /sonnet/i.test(model) ? 2 : /opus/i.test(model) ? 3 : 4
 
-/** The tier's model, or undefined where it would outrank the parent's: the router only routes down. */
+/** The tier's model, or undefined where it would outrank the parent's: the mod only routes down. */
 export const modelFor = (tier: Tier, parentModel: string) =>
   rank(MODEL_OF[tier]) > rank(parentModel) ? undefined : MODEL_OF[tier]
 

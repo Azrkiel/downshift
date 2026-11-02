@@ -2,7 +2,7 @@ import type { Arm } from './bandit'
 import { evidenceOf, observe } from './bandit'
 
 /** Where the record lives under the home folder; never read from a project. */
-export const STATE_FILE = '.claude/model-router-state.json'
+export const STATE_FILE = '.claude/downshift-state.json'
 
 const VERSION = 1
 
@@ -134,7 +134,7 @@ export const reset = async (files: Files, path: string): Promise<Store> => {
 const rate = (arm: Arm) =>
   `${Math.round(((arm.alpha - 1) / evidenceOf(arm)) * 100)}% of ${evidenceOf(arm).toFixed(1)}`
 
-/** The record as `/router learn` shows it: per bucket, each model's success rate and how much it rests on. */
+/** The record as `/downshift learn` shows it: per bucket, each model's success rate and how much it rests on. */
 export const describe = (store: Store) => [
   store.path === ''
     ? 'State: memory only (no home folder found).'

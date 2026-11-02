@@ -68,7 +68,7 @@ const money = (amount: number) => `${amount < 0 ? '-' : ''}$${Math.abs(amount).t
 
 const runsOf = (count: number) => `${count} ${count === 1 ? 'run' : 'runs'}`
 
-/** One line for the `/router` report; undefined with nothing recorded. */
+/** One line for the `/downshift` report; undefined with nothing recorded. */
 export const lifetimeLine = (ledger: Ledger) => {
   const first = firstDay(ledger)
   if (first === undefined) return undefined

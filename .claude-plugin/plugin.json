@@ -1,6 +1,6 @@
 {
   "name": "model-router",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Routes each subagent to the cheapest model that fits its task: haiku for web and lookup work, sonnet for building, opus for architecture.",
   "author": {
     "name": "Azrkiel"
@@ -43,7 +43,7 @@
     "learning": {
       "type": "string",
       "title": "Learned routing",
-      "description": "on: each bucket's record of answers and escalations can move a task one tier, and every 10th placed task tries the tier below. shadow: the record is kept and the report says what it would pick. off: rules only.",
+      "description": "on: each bucket's record of answers, escalations and repeated tasks can move a task one tier, and every 5th placed task tries the tier below while that tier has too little record. Build work never moves down. shadow: the record is kept and the report says what it would pick. off: rules only.",
       "options": [
         "on",
         "shadow",

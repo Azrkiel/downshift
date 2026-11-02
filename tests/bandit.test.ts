@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { choose, evidenceOf, observe, sampleBeta } from '../hooks/bandit'
+import { MIN_EVIDENCE, PROBE_EVERY, choose, evidenceOf, observe, sampleBeta } from '../hooks/bandit'
 
 // mulberry32: a seeded generator, so draws are the same on every run.
 export const seeded = (seed: number) => () => {
@@ -22,6 +22,30 @@ test('Beta draws centre on the mean and stay in [0, 1]', () => {
   expect(Math.abs(sum / 5000 - 0.8) < 0.02).toBe(true)
   const small = sampleBeta({ alpha: 0.5, beta: 0.5 }, random)
   expect(small >= 0 && small <= 1).toBe(true)
+})
+
+test('probes alone can build a junior a record that counts', () => {
+  let arms = {}
+  for (let task = 1; task <= 500; task++) {
+    arms = observe(arms, task % PROBE_EVERY === 0 ? 'haiku' : 'sonnet', true)
+  }
+  // Right before the next probe, the lowest point of the cycle.
+  const junior = (arms as Record<string, { alpha: number; beta: number }>).haiku
+  expect(junior !== undefined && evidenceOf(junior) >= MIN_EVIDENCE).toBe(true)
+})
+
+test('a probe says it is one', () => {
+  const picked = choose({
+    model: 'sonnet',
+    junior: 'haiku',
+    senior: 'opus',
+    arms: {},
+    ratio: () => 0.05,
+    probe: true,
+    random: seeded(1),
+  })
+  expect(picked.model).toBe('haiku')
+  expect(picked.isProbe).toBe(true)
 })
 
 test('a bad shape or a broken random still answers', () => {
@@ -50,7 +74,7 @@ const HALF = () => 0.5
 test('with no record the rules decide, apart from a probe', () => {
   const base = { model: 'sonnet', junior: 'haiku', senior: 'opus', arms: {}, ratio: () => 0.5, random: seeded(1) }
   expect(choose({ ...base, probe: false })).toEqual({ model: 'sonnet' })
-  expect(choose({ ...base, probe: true })).toEqual({ model: 'haiku', reason: 'probe: trying haiku' })
+  expect(choose({ ...base, probe: true })).toEqual({ model: 'haiku', reason: 'probe: trying haiku', isProbe: true })
   expect(choose({ ...base, junior: undefined, probe: true })).toEqual({ model: 'sonnet' })
 })
 

@@ -5,6 +5,9 @@
   "author": {
     "name": "Azrkiel"
   },
+  "homepage": "https://github.com/Azrkiel/downshift-plugin",
+  "repository": "https://github.com/Azrkiel/downshift-plugin",
+  "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
     "fallback": {

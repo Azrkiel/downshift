@@ -1,0 +1,12 @@
+{
+  "name": "downshift",
+  "description": "Model routing for Claude Code.",
+  "owner": { "name": "Azrkiel" },
+  "plugins": [
+    {
+      "name": "downshift",
+      "source": "./",
+      "description": "Model routing for Claude Code. Runs each subagent on the cheapest model that fits its task."
+    }
+  ]
+}

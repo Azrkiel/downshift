@@ -67,11 +67,14 @@ A worker spawned by another subagent (a phase manager in `xvant-execute`'s phase
 
 The rules still place every task. The mod then keeps a record, per bucket (`scout`, `builder`, `architect`, and `open` for fallback tasks), of how each model did: an answer counts as a success, an escalation handoff as a failure. Interrupts, refusals and API errors count for nothing, and so does a run with nobody above it to hand over to, since it could only ever succeed.
 
+A run that answers can still have fallen short without saying so. If the same parent later sends the same task again, the earlier run counts as a failure too and shows as `redone`. "The same task" means the same description once words like "retry" are removed, and at least half the prompt's words in common. Both are required, because a batch from one template overlaps nearly word for word. A twin that starts while the first is still running is not a repeat. This catches only what gets re-dispatched, so wrong work nobody redoes still counts as a success.
+
 - Once a model has about five outcomes in a bucket, the record can move a task **one tier**: down when the cheaper model succeeds often enough to pay for its escalations (by the price table, plus a 15-point margin, and at least 70% of the time, since every escalation costs a second run's wait), up when the rules' model escalates so often that going straight to the senior is cheaper. Never above the session's model.
-- Every 10th placed task in a bucket tries the tier below while that tier has too little record, and only while escalation is on to catch it.
+- Build work stays on sonnet: the `builder` bucket's record can move a task up, never down, and it is never probed.
+- Every 5th placed task in another bucket tries the tier below while that tier has too little record, and only while escalation is on to catch it. The count carries across sessions, so a run of short ones still reaches a probe. This is the rate that can work: each outcome in a bucket fades every model's record there, and probing every 10th task tops out at 3.8 remembered outcomes, under the five a move needs.
 - Old outcomes fade (about the last 33 count), so the record follows model changes.
 - Rule-file pins, `Explore`/`Plan`, custom agents and calls that name a model are never moved.
-- One load of the mod adds at most three outcomes per bucket, so a single session, or a subagent tricked by a web page into writing a handoff, cannot build a record on its own.
+- One load of the mod adds at most three outcomes per bucket for each kind (answers and handoffs, probes, repeats), so a single session, or a subagent tricked by a web page into writing a handoff, cannot build a record on its own.
 
 The record is `~/.claude/model-router-state.json`: counts only, no task text, never read from a project. A file that will not parse, or has a newer version, is left untouched and learning stays in memory; `/router learn` says why and `/router learn reset` starts over.
 
@@ -86,6 +89,7 @@ Past 75% of a rate-limit window, tasks with no signal run one tier down; past 90
 | Command | What it does |
 | --- | --- |
 | `/router` | Routing state, a tally per model, estimated savings, and the last 15 routes |
+| `/router savings` | Savings across all sessions since the ledger started |
 | `/router pane` | Opens a live pane of routes with a pause button |
 | `/router off`, `/router on` | Pauses and resumes routing for the session |
 | `/router rules` | Shows the rule files that loaded and any entries they misspell |
@@ -128,9 +132,11 @@ The mod reads `~/.claude/model-router.json`, then `.claude/model-router.json` in
 
 ## Savings estimate
 
-When a routed subagent finishes, the mod prices its tokens on the model it ran on and on the session's model, and counts the difference as saved. An escalated junior counts as a loss of its full cost.
+When a routed subagent finishes, the mod prices its tokens on the model it ran on and on the model of the agent that spawned it, and counts the difference as saved. An escalated or repeated run counts as a loss of its full cost. Haiku 5.5's higher rate on prompts over 100K tokens is applied per response.
 
-This is an estimate. It assumes the stronger model would have used the same number of tokens.
+Totals are kept per day in the mod's `$.store`, counts and dollars only, and `/router savings` adds them up.
+
+This is an estimate at API list prices. It assumes the stronger model would have used the same number of tokens. On a subscription it measures usage room, not money.
 
 ## Development
 
@@ -139,7 +145,7 @@ claude plugin validate .
 claude plugin test .
 ```
 
-`hooks/route.ts` holds the keyword rules, `hooks/handoff.ts` the escalation protocol and senior brief, `hooks/rules.ts` the rule file and prices, `hooks/bandit.ts` the Thompson sampler and the learned choice, `hooks/learnstore.ts` the learned record's file, `hooks/budget.ts` the rate-limit ladder, and `hooks/register.tsx` the hooks, commands and pane.
+`hooks/route.ts` holds the keyword rules, `hooks/handoff.ts` the escalation protocol and senior brief, `hooks/rules.ts` the rule file and prices, `hooks/bandit.ts` the Thompson sampler and the learned choice, `hooks/learnstore.ts` the learned record's file, `hooks/redo.ts` the repeated-task check, `hooks/ledger.ts` the savings totals, `hooks/budget.ts` the rate-limit ladder, and `hooks/register.tsx` the hooks, commands and pane.
 
 `hooks/bandit.ts` adapts ruflo's Beta sampler and `hooks/route.ts` freellmapi's code markers, both under MIT; see `THIRD_PARTY_NOTICES.md`.
 

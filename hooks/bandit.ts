@@ -94,7 +94,15 @@ export const MARGIN = 0.15
  */
 export const FLOOR = 0.7
 
-export type Choice = { model: string; reason?: string }
+/**
+ * How often a placed task tries a junior with too little record. Every outcome
+ * in a bucket fades every arm by DECAY, so probes alone hold a junior at
+ * 1 / (1 - DECAY^n) outcomes: every 10th peaks at 3.81, which never reaches
+ * MIN_EVIDENCE, and every 5th at 7.08, which stays above it between probes.
+ */
+export const PROBE_EVERY = 5
+
+export type Choice = { model: string; reason?: string; isProbe?: boolean }
 
 export type ChooseInput = {
   /** The rules' model. */
@@ -140,5 +148,5 @@ export const choose = (input: ChooseInput): Choice => {
       : { model }
   }
 
-  return probe ? { model: junior, reason: `probe: trying ${junior}` } : { model }
+  return probe ? { model: junior, reason: `probe: trying ${junior}`, isProbe: true } : { model }
 }

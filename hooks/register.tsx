@@ -2,25 +2,32 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Route } from '../types'
-import { choose } from './bandit'
+import { PROBE_EVERY, choose } from './bandit'
 import { CRITICAL, TIGHT, isRaised, rungOf, shiftsDown } from './budget'
 import { delegating } from './delegate'
 import type { Rung } from './budget'
 import { handoffOf, protocol, seniorBrief } from './handoff'
 import { STATE_FILE, describe, open, record as count, reset } from './learnstore'
 import type { Bucket, Files, Store } from './learnstore'
+import { LEDGER_KEY, addTo, dayOf, describeLedger, lifetimeLine, parseLedger } from './ledger'
+import type { Day } from './ledger'
+import { isRedo } from './redo'
 import { MODEL_OF, TIERS, judge, juniorOf, modelFor, seniorOf, tierOfModel } from './route'
 import type { Tier } from './route'
-import { costOf, defaults, merge, ratioOf, tokensOf } from './rules'
+import { costOf, defaults, longPromptExtra, merge, ratioOf, tokensOf } from './rules'
 import type { Rules } from './rules'
 
 const PLUGIN = 'model-router'
 const PANE = PLUGIN
 const RULE_FILE = '.claude/model-router.json'
-/** Every Nth placed task in a bucket may try the tier below while that tier has too little record. */
-const PROBE_EVERY = 10
-/** Outcomes one load of the mod may add per bucket: no single session can build a record alone. */
+/**
+ * Outcomes one load of the mod may add per bucket, per kind: no single session
+ * can build a record alone. Kinds cap apart so a probe or a redo, the rarer
+ * signals, are not lost to the plain answers ahead of them.
+ */
 const SESSION_CAP = 3
+/** Finished runs a load remembers for the redo check. */
+const REMEMBERED = 30
 
 const routes = atom({ plugin: 'model-router', key: 'routes' } as const, [])
 const isPaused = atom({ plugin: 'model-router', key: 'isPaused' } as const, false)
@@ -70,8 +77,25 @@ type Live = {
   bucket?: Bucket
   /** Spawned by a subagent (a phase manager): that parent, not the router, takes over a handoff. */
   isNested: boolean
+  /** The agent that spawned it; undefined for the main session. */
+  parent?: string
   isHandedOver: boolean
+  /** Sent a tier down to build that tier's record. */
+  isProbe: boolean
 }
+
+/** A cheap run that answered: if its task comes back, the answer was not enough. */
+type Finished = {
+  id: string
+  description: string
+  prompt: string
+  model: string
+  bucket?: Bucket
+  /** The agent that spawned it; undefined for the main session. */
+  parent?: string
+}
+
+type OutcomeKind = 'plain' | 'probe' | 'redo'
 
 type Loaded = { rules: Rules; files: string[] }
 
@@ -124,16 +148,24 @@ const filesOf = ($: EngineInterface): Files => ({
 type Learning = {
   store?: Promise<Store>
   writing: Promise<unknown>
-  /** Placed tasks per bucket, for the probe. */
+  /** Placed tasks per bucket, for the probe; what `$.store` holds wins, this covers a store that fails. */
   placed: Map<Bucket, number>
-  /** Outcomes counted per bucket, for the cap. */
-  counted: Map<Bucket, number>
+  /** Outcomes counted per bucket and kind, for the cap. */
+  counted: Map<string, number>
+  /** Runs that answered, newest last, for the redo check. */
+  finished: Finished[]
+  /** Dollars the long-prompt rate added to each running agent, from its responses. */
+  extras: Map<string, number>
+  ledgerWrites: Promise<unknown>
 }
 
 const learningState = (): Learning => ({
   writing: Promise.resolve(),
   placed: new Map(),
   counted: new Map(),
+  finished: [],
+  extras: new Map(),
+  ledgerWrites: Promise.resolve(),
 })
 
 const statePath = (home: string | undefined) => (home === undefined ? '' : `${home}/${STATE_FILE}`)
@@ -148,10 +180,12 @@ const learn = async (
   bucket: Bucket,
   model: string,
   isSuccess: boolean,
+  kind: OutcomeKind,
 ) => {
-  const seen = state.counted.get(bucket) ?? 0
+  const key = `${bucket}/${kind}`
+  const seen = state.counted.get(key) ?? 0
   if (seen >= SESSION_CAP) return
-  state.counted.set(bucket, seen + 1)
+  state.counted.set(key, seen + 1)
   state.writing = state.writing
     .then(async () => {
       const before = await storeOf($, state)
@@ -163,6 +197,66 @@ const learn = async (
     })
     .catch(() => undefined)
   await state.writing
+}
+
+/** This bucket's placed count, kept across sessions so a run of short ones still reaches a probe. */
+const placedCount = async ($: EngineInterface, state: Learning, bucket: Bucket) => {
+  const key = `placed.${bucket}`
+  const stored = await $.store.get(key).catch(() => undefined)
+  const seen =
+    (typeof stored === 'number' && Number.isFinite(stored) ? stored : (state.placed.get(bucket) ?? 0)) + 1
+  state.placed.set(bucket, seen)
+  await $.store.set(key, seen).catch(() => undefined)
+
+  return seen
+}
+
+const readLedger = async ($: EngineInterface) =>
+  parseLedger(await $.store.get(LEDGER_KEY).catch(() => undefined))
+
+/** Adds to today's totals, one write at a time; a store that fails costs the ledger, never the route. */
+const addToLedger = async ($: EngineInterface, state: Learning, delta: Partial<Day>) => {
+  const now = await $.clock.now().catch(() => Date.now())
+  state.ledgerWrites = state.ledgerWrites
+    .then(async () => {
+      const ledger = await readLedger($)
+      await $.store.set(LEDGER_KEY, addTo(ledger, dayOf(now), delta))
+    })
+    .catch(() => undefined)
+  await state.ledgerWrites
+}
+
+/** Takes the newest finished run under the same parent that this new task repeats. */
+const takeRedone = (state: Learning, e: { description: string; prompt: string; parentAgentId?: string }) => {
+  for (let i = state.finished.length - 1; i >= 0; i--) {
+    const one = state.finished[i]
+    if (one !== undefined && one.parent === e.parentAgentId && isRedo(one, e)) {
+      state.finished.splice(i, 1)
+
+      return one
+    }
+  }
+
+  return undefined
+}
+
+/** A repeated task means the earlier answer fell short: a failed outcome, and a run that saved nothing. */
+const countRedo = async (
+  $: EngineInterface,
+  state: Learning,
+  one: Finished,
+  isLearning: boolean,
+) => {
+  if (isLearning && one.bucket !== undefined) {
+    await learn($, state, one.bucket, one.model, false, 'redo')
+  }
+  const route = (await read($, routes)).find(each => each.id === one.id)
+  if (route === undefined) return
+  const list = await update($, routes, all =>
+    all.map(each => (each.id === one.id ? { ...each, status: 'redone' as const, saved: -each.cost } : each)),
+  )
+  $.ui.status(`router: ${summary(list)}`)
+  await addToLedger($, state, { saved: -route.cost - route.saved, redone: 1 })
 }
 
 const load = async ($: EngineInterface): Promise<Loaded> => {
@@ -209,7 +303,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'router',
       description:
-        'Model routing: report, `pane`, `on`, `off`, `rules`, `reload`, `learn`, `learn reset`',
+        'Model routing: report, `savings`, `pane`, `on`, `off`, `rules`, `reload`, `learn`, `learn reset`',
     })
     void rulesOf($)
 
@@ -231,6 +325,9 @@ export const register: Register = (on, options) => {
       await $.ui.open({ id: PANE, title: 'Model router' })
 
       return { text: 'Model router pane opened.' }
+    }
+    if (arg === 'savings') {
+      return { text: describeLedger(await readLedger($)) }
     }
     if (arg === 'learn' || arg === 'learn reset') {
       if (arg === 'learn reset') {
@@ -263,10 +360,12 @@ export const register: Register = (on, options) => {
     }
 
     const list = await read($, routes)
+    const lifetime = lifetimeLine(await readLedger($))
 
     return {
       text: [
         `Model routing is ${(await read($, isPaused)) ? 'off' : 'on'}. ${summary(list)}`,
+        ...(lifetime === undefined ? [] : [lifetime]),
         `Fallback ${MODEL_OF[fallback]}, classifier ${hasModelClassifier ? 'rules+model' : 'rules'}, nudge ${hasNudge ? 'on' : 'off'}, escalation ${hasEscalation ? 'on' : 'off'}, learning ${learning}.`,
         'Savings are an estimate: the same tokens priced on the parent model, less what the run cost.',
         ...(list.length === 0
@@ -278,6 +377,12 @@ export const register: Register = (on, options) => {
 
   on('agent.spawn', async ($, e, next) => {
     if (await read($, isPaused)) return next(e)
+
+    // Before routing, so a repeat that names its own model counts too.
+    if (!e.fork) {
+      const redone = takeRedone(state, e)
+      if (redone !== undefined) await countRedo($, state, redone, learning !== 'off')
+    }
 
     const { rules } = await rulesOf($)
     const verdict = judge(e, rules)
@@ -305,12 +410,13 @@ export const register: Register = (on, options) => {
     const bucket: Bucket | undefined =
       !verdict.isLearnable || tier === undefined ? undefined : reason === 'fallback' ? 'open' : tier
 
+    let isProbe = false
     if (bucket !== undefined && learning !== 'off') {
-      const seen = (state.placed.get(bucket) ?? 0) + 1
-      state.placed.set(bucket, seen)
+      const seen = await placedCount($, state, bucket)
       const pick = choose({
         model,
-        junior: juniorOf(model),
+        // Build work stays on its model: the record may move it up, never down.
+        junior: bucket === 'builder' ? undefined : juniorOf(model),
         senior: seniorOf(model, e.parentModel),
         arms: (await storeOf($, state)).learned[bucket],
         ratio: ratioOf(rules),
@@ -321,6 +427,7 @@ export const register: Register = (on, options) => {
       if (learning === 'on' && pick.reason !== undefined) {
         model = pick.model
         reason = pick.reason
+        isProbe = pick.isProbe === true
       } else if (pick.model !== model) {
         reason = `${reason}; learned would pick ${pick.model}`
       }
@@ -356,7 +463,9 @@ export const register: Register = (on, options) => {
         senior,
         bucket,
         isNested,
+        parent: e.parentAgentId,
         isHandedOver: false,
+        isProbe,
       })
     }
     await record($, {
@@ -374,6 +483,24 @@ export const register: Register = (on, options) => {
     return started
   }).catch(($, e, next) => next(e))
 
+  // The long-prompt rate depends on each request, and `turn.complete` has only
+  // the sum. This hook sees every response of the session, so it only reads, and
+  // never lets its own accounting break a stream.
+  on('turn.step', async function* ($, e, next) {
+    const response = yield* next(e)
+    const agent = e.agentId
+    if (agent === undefined || response.usage === null || !live.has(agent)) return response
+    try {
+      const { rules } = await rulesOf($)
+      const extra = longPromptExtra(response.usage, response.usage.model, rules)
+      if (extra > 0) state.extras.set(agent, (state.extras.get(agent) ?? 0) + extra)
+    } catch {
+      // A missing surcharge only makes the estimate a little high.
+    }
+
+    return response
+  })
+
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
     const one = e.agentId === undefined ? undefined : live.get(e.agentId)
@@ -382,13 +509,18 @@ export const register: Register = (on, options) => {
     const handoff =
       e.reason === 'answer' && one.senior !== undefined ? handoffOf(e.answer) : undefined
     const { rules } = await rulesOf($)
-    const cost = e.usage === undefined ? 0 : (costOf(e.usage, one.model, rules) ?? 0)
+    const extra = state.extras.get(e.agentId) ?? 0
+    state.extras.delete(e.agentId)
+    const cost = (e.usage === undefined ? 0 : (costOf(e.usage, one.model, rules) ?? 0)) + extra
     const base = e.usage === undefined ? undefined : costOf(e.usage, one.parentModel, rules)
     // An escalated run bought a report, not the task: its cost is the loss.
     const saved = handoff !== undefined ? -cost : base === undefined ? 0 : base - cost
     const tokens = e.usage === undefined ? 0 : tokensOf(e.usage)
     const status: Route['status'] =
       handoff !== undefined ? 'escalated' : e.reason === 'answer' ? 'done' : 'failed'
+    const isFirstEnd = (await read($, routes)).some(
+      route => route.id === e.agentId && route.status === 'running',
+    )
 
     const list = await update($, routes, all =>
       all.map(route =>
@@ -404,6 +536,36 @@ export const register: Register = (on, options) => {
       ),
     )
     $.ui.status(`router: ${summary(list)}`)
+    await addToLedger($, state, {
+      runs: isFirstEnd ? 1 : 0,
+      tokens,
+      cost,
+      base: base ?? cost,
+      saved,
+      escalated: handoff !== undefined ? 1 : 0,
+    })
+
+    // Only a run that could have handed over can be blamed for a repeat, and a
+    // senior's task coming back says nothing about the model it took over from.
+    if (
+      e.reason === 'answer' &&
+      handoff === undefined &&
+      one.senior !== undefined &&
+      one.tookOverFrom === undefined
+    ) {
+      const others = state.finished.filter(each => each.id !== e.agentId)
+      state.finished = [
+        ...others,
+        {
+          id: e.agentId,
+          description: one.description,
+          prompt: one.task,
+          model: one.model,
+          bucket: one.bucket,
+          parent: one.parent,
+        },
+      ].slice(-REMEMBERED)
+    }
 
     // An answer is a success, a handoff a failure; an interrupt, a refusal or
     // an API error says nothing about the model. A run with nobody to hand
@@ -414,7 +576,7 @@ export const register: Register = (on, options) => {
       learning !== 'off' &&
       e.reason === 'answer'
     ) {
-      await learn($, state, one.bucket, one.model, handoff === undefined)
+      await learn($, state, one.bucket, one.model, handoff === undefined, one.isProbe ? 'probe' : 'plain')
     }
 
     // A worker's parent reads its handoff and re-dispatches it; the router
@@ -465,6 +627,7 @@ export const register: Register = (on, options) => {
           bucket: one.bucket,
           isNested: false,
           isHandedOver: false,
+          isProbe: false,
         })
       }
       await record($, {
@@ -557,7 +720,7 @@ export const register: Register = (on, options) => {
           <Text
             dimColor={route.status === 'done'}
             color={
-              route.status === 'escalated' || route.status === 'failed'
+              route.status === 'escalated' || route.status === 'failed' || route.status === 'redone'
                 ? 'yellow'
                 : undefined
             }

@@ -21,8 +21,9 @@ export type Rules = {
 }
 
 // First-party API list prices (Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.1;
-// checked 2026-10-16); a rule file's `prices` replaces a family's. Haiku 5.5
-// costs five times this on prompts over 100K tokens, which a subagent rarely sends.
+// checked 2026-10-16); a rule file's `prices` replaces a family's. Haiku 5.5's
+// long-prompt rate is `longPromptExtra`: long runs do reach it, and it was most
+// of what routed Haiku actually cost through 2026-11-01.
 const PRICES: Record<string, Price> = {
   haiku: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
   sonnet: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
@@ -127,6 +128,22 @@ export const costOf = (usage: ModelUsage, model: string, rules: Rules) => {
       usage.cache_creation_input_tokens * price.cacheWrite) /
     1_000_000
   )
+}
+
+const LONG_PROMPT = 100_000
+const LONG_FACTOR = 5
+
+/**
+ * What Haiku 5.5's long-prompt rate adds to one response. The rate depends on
+ * each request's own prompt, cache tokens counted, so a turn's summed usage
+ * cannot tell it; pass one response's.
+ */
+export const longPromptExtra = (usage: ModelUsage, model: string, rules: Rules) => {
+  if (!model.toLowerCase().includes('haiku')) return 0
+  const prompt =
+    usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+
+  return prompt <= LONG_PROMPT ? 0 : (costOf(usage, model, rules) ?? 0) * (LONG_FACTOR - 1)
 }
 
 /** What `cheap` costs as a share of `dear`, by input price; 0.5 where either has no price. */

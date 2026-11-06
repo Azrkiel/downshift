@@ -2,25 +2,25 @@ const HEADING = '## ESCALATION HANDOFF'
 const MARKER = /^##\s*ESCALATION HANDOFF\b/m
 
 /**
- * Who takes over a stuck run: the router itself for a subagent of the main
+ * Who takes over a stuck run: the mod itself for a subagent of the main
  * session, the spawning agent for a worker under a subagent (a phase manager),
- * since the router can deliver a senior's answer only to the main session.
+ * since the mod can deliver a senior's answer only to the main session.
  */
-export type Handler = 'router' | 'parent'
+export type Handler = 'mod' | 'parent'
 
 const HANDS_OVER: Record<Handler, string> = {
-  router:
+  mod:
     'Writing that heading hands the task over: the senior is dispatched automatically with your report, so nobody needs to re-dispatch it.',
   parent:
     'Writing that heading hands the task back to the agent that spawned you, which passes it with your report to the senior.',
 }
 
 /** What a routed subagent's prompt ends with while a stronger model is on call above it. */
-export const protocol = (senior: string, handler: Handler = 'router') =>
+export const protocol = (senior: string, handler: Handler = 'mod') =>
   [
     '',
     '---',
-    `Escalation protocol (model-router). You are the first engineer on this task, and a senior engineer on a stronger model (${senior}) is on call. Work the task properly first. If you hit a wall you cannot get past (the same failure after two real attempts at different approaches, a root cause you cannot find, a decision you lack the context to judge), stop there: do not guess, and do not present a partial fix as done. End your final answer with this report, filled in honestly and specifically, with file paths, commands and exact error text:`,
+    `Escalation protocol (downshift). You are the first engineer on this task, and a senior engineer on a stronger model (${senior}) is on call. Work the task properly first. If you hit a wall you cannot get past (the same failure after two real attempts at different approaches, a root cause you cannot find, a decision you lack the context to judge), stop there: do not guess, and do not present a partial fix as done. End your final answer with this report, filled in honestly and specifically, with file paths, commands and exact error text:`,
     '',
     HEADING,
     '### The task as I understood it',

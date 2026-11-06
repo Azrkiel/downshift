@@ -43,7 +43,7 @@ test('the state written holds counts and nothing else', () => {
   })
 })
 
-const PATH = 'C:/home/.claude/model-router-state.json'
+const PATH = 'C:/home/.claude/downshift-state.json'
 
 const memory = (initial: Record<string, string> = {}) => {
   const disk = new Map(Object.entries(initial))

@@ -7,7 +7,7 @@
  */
 
 const POLICY = [
-  "**Delegation: the user's standing request, through the model-router mod.**",
+  "**Delegation: the user's standing request, through the downshift mod.**",
   'Delegate self-contained work without waiting to be asked. The mod runs each subagent on the cheapest model that fits (haiku for web research, search and lookups; sonnet for well-specified implementation, fixes and tests) and escalates one that gets stuck, so delegating saves the user usage.',
   'Delegate when the task can be briefed in a paragraph and does not need this conversation: a web or codebase search, bulk reading or summarizing, an implementation step with clear acceptance criteria.',
   'Keep small steps, tightly coupled edits and judgment calls inline. Do not name a `model`; the mod picks it.',
@@ -21,5 +21,5 @@ const ONLY_WHEN_ASKED = /\s*Only use this tool when the user explicitly says[^.\
 export const delegating = (description: string) => {
   const freed = description.replace(ONLY_WHEN_ASKED, '')
 
-  return RULE.test(freed) ? freed.replace(RULE, POLICY) : `${freed}\n\n${POLICY}`
+  return RULE.test(freed) ? freed.replace(RULE, POLICY) : [freed, POLICY].join('\n\n')
 }

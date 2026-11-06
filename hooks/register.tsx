@@ -17,9 +17,9 @@ import type { Tier } from './route'
 import { costOf, defaults, longPromptExtra, merge, ratioOf, tokensOf } from './rules'
 import type { Rules } from './rules'
 
-const PLUGIN = 'model-router'
+const PLUGIN = 'downshift'
 const PANE = PLUGIN
-const RULE_FILE = '.claude/model-router.json'
+const RULE_FILE = '.claude/downshift.json'
 /**
  * Outcomes one load of the mod may add per bucket, per kind: no single session
  * can build a record alone. Kinds cap apart so a probe or a redo, the rarer
@@ -29,8 +29,8 @@ const SESSION_CAP = 3
 /** Finished runs a load remembers for the redo check. */
 const REMEMBERED = 30
 
-const routes = atom({ plugin: 'model-router', key: 'routes' } as const, [])
-const isPaused = atom({ plugin: 'model-router', key: 'isPaused' } as const, false)
+const routes = atom({ plugin: 'downshift', key: 'routes' } as const, [])
+const isPaused = atom({ plugin: 'downshift', key: 'isPaused' } as const, false)
 
 // What the small model picks between when the keywords place nothing.
 const LABEL_OF: Record<Tier, string> = {
@@ -40,11 +40,11 @@ const LABEL_OF: Record<Tier, string> = {
 }
 
 const NUDGE = {
-  id: 'model-router:delegation',
+  id: 'downshift:delegation',
   scope: 'session',
   text: [
     '# Model routing',
-    'The user installed the model-router mod, which runs each subagent on the cheapest model that fits its task. Treat that as their standing request to delegate self-contained work through the Agent tool, without naming a `model` yourself:',
+    'The user installed the downshift mod, which runs each subagent on the cheapest model that fits its task. Treat that as their standing request to delegate self-contained work through the Agent tool, without naming a `model` yourself:',
     '- Web research, scraping, bulk search and lookups: an Explore or general-purpose agent (runs on haiku).',
     '- Well-specified implementation, fixes and tests: a general-purpose agent (runs on sonnet).',
     '- Architecture, planning and hard judgment calls: a Plan agent, or do it yourself (opus).',
@@ -53,15 +53,15 @@ const NUDGE = {
 } as const
 
 const ESCALATION = {
-  id: 'model-router:escalation',
+  id: 'downshift:escalation',
   scope: 'session',
   text: [
     '# Subagent escalation',
-    'A subagent answer that ends with a `## ESCALATION HANDOFF` report means the subagent could not finish and the model-router mod has already dispatched a senior agent on a stronger model with that report. Do not redo the task or dispatch it again: tell the user it was escalated, carry on with work that does not depend on it, and use the senior\'s report when it arrives as a message from the model-router plugin.',
+    'A subagent answer that ends with a `## ESCALATION HANDOFF` report means the subagent could not finish and the downshift mod has already dispatched a senior agent on a stronger model with that report. Do not redo the task or dispatch it again: tell the user it was escalated, carry on with work that does not depend on it, and use the senior\'s report when it arrives as a message from the downshift plugin.',
   ].join('\n'),
 } as const
 
-/** A subagent the router is following, from its spawn to the end of its run. */
+/** A subagent the mod is following, from its spawn to the end of its run. */
 type Live = {
   /** The task as first given, before the protocol was added and before any handoff. */
   task: string
@@ -73,9 +73,9 @@ type Live = {
   senior?: string
   /** The model of the junior this one took over from. */
   tookOverFrom?: string
-  /** The learning bucket its outcome counts in; undefined where the router did not place it by its words. */
+  /** The learning bucket its outcome counts in; undefined where the mod did not place it by its words. */
   bucket?: Bucket
-  /** Spawned by a subagent (a phase manager): that parent, not the router, takes over a handoff. */
+  /** Spawned by a subagent (a phase manager): that parent, not the mod, takes over a handoff. */
   isNested: boolean
   /** The agent that spawned it; undefined for the main session. */
   parent?: string
@@ -192,7 +192,7 @@ const learn = async (
       const after = await count(filesOf($), before, bucket, model, isSuccess)
       state.store = Promise.resolve(after)
       if (before.isWritable && !after.isWritable) {
-        $.ui.toast(`router: learning stays in memory (${after.problem ?? 'unknown'})`)
+        $.ui.toast(`downshift: learning stays in memory (${after.problem ?? 'unknown'})`)
       }
     })
     .catch(() => undefined)
@@ -255,7 +255,7 @@ const countRedo = async (
   const list = await update($, routes, all =>
     all.map(each => (each.id === one.id ? { ...each, status: 'redone' as const, saved: -each.cost } : each)),
   )
-  $.ui.status(`router: ${summary(list)}`)
+  $.ui.status(`downshift: ${summary(list)}`)
   await addToLedger($, state, { saved: -route.cost - route.saved, redone: 1 })
 }
 
@@ -281,7 +281,7 @@ const rulesOf = ($: EngineInterface) => (loaded ??= load($))
 
 const record = async ($: EngineInterface, route: Route) => {
   const list = await update($, routes, all => [...all, route].slice(-200))
-  $.ui.status(`router: ${summary(list)}`)
+  $.ui.status(`downshift: ${summary(list)}`)
 }
 
 export const register: Register = (on, options) => {
@@ -301,7 +301,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
-      name: 'router',
+      name: 'downshift',
       description:
         'Model routing: report, `savings`, `pane`, `on`, `off`, `rules`, `reload`, `learn`, `learn reset`',
     })
@@ -310,21 +310,21 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'router' }, async ($, e) => {
+  on('command.run', { command: 'downshift' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
 
     if (arg === 'off' || arg === 'on') {
       await update($, isPaused, () => arg === 'off')
-      $.ui.status(arg === 'off' ? 'router: paused' : undefined)
+      $.ui.status(arg === 'off' ? 'downshift: paused' : undefined)
       // The Agent tool's wording follows the pause from the next turn.
       $.ui.invalidate('tool.describe')
 
       return { text: `Model routing is ${arg}.` }
     }
     if (arg === 'pane') {
-      await $.ui.open({ id: PANE, title: 'Model router' })
+      await $.ui.open({ id: PANE, title: 'Downshift' })
 
-      return { text: 'Model router pane opened.' }
+      return { text: 'Downshift pane opened.' }
     }
     if (arg === 'savings') {
       return { text: describeLedger(await readLedger($)) }
@@ -405,7 +405,7 @@ export const register: Register = (on, options) => {
     let model = tier === undefined ? undefined : modelFor(tier, e.parentModel)
     if (model === undefined) return next(e)
 
-    // Only what the router placed by its words, or by fallback, learns: a rule
+    // Only what the mod placed by its words, or by fallback, learns: a rule
     // file, a fixed agent type or a named model is someone's choice.
     const bucket: Bucket | undefined =
       !verdict.isLearnable || tier === undefined ? undefined : reason === 'fallback' ? 'open' : tier
@@ -449,7 +449,7 @@ export const register: Register = (on, options) => {
     const started = await next({
       ...e,
       model,
-      prompt: senior === undefined ? e.prompt : e.prompt + protocol(senior, isNested ? 'parent' : 'router'),
+      prompt: senior === undefined ? e.prompt : e.prompt + protocol(senior, isNested ? 'parent' : 'mod'),
     })
     if (started.deny !== undefined) return started
 
@@ -535,7 +535,7 @@ export const register: Register = (on, options) => {
           : route,
       ),
     )
-    $.ui.status(`router: ${summary(list)}`)
+    $.ui.status(`downshift: ${summary(list)}`)
     await addToLedger($, state, {
       runs: isFirstEnd ? 1 : 0,
       tokens,
@@ -579,7 +579,7 @@ export const register: Register = (on, options) => {
       await learn($, state, one.bucket, one.model, handoff === undefined, one.isProbe ? 'probe' : 'plain')
     }
 
-    // A worker's parent reads its handoff and re-dispatches it; the router
+    // A worker's parent reads its handoff and re-dispatches it; the mod
     // could only hand the senior's answer to the main session.
     if (handoff !== undefined && one.isNested) {
       one.isHandedOver = true
@@ -602,7 +602,7 @@ export const register: Register = (on, options) => {
       })
 
       if (started.deny !== undefined) {
-        $.ui.toast(`router: could not escalate "${one.description}" to ${model}`)
+        $.ui.toast(`downshift: could not escalate "${one.description}" to ${model}`)
 
         return done
       }
@@ -641,7 +641,7 @@ export const register: Register = (on, options) => {
         cost: 0,
         saved: 0,
       })
-      $.ui.toast(`router: ${one.model} handed "${one.description}" to ${model}`)
+      $.ui.toast(`downshift: ${one.model} handed "${one.description}" to ${model}`)
 
       return done
     }
@@ -668,8 +668,8 @@ export const register: Register = (on, options) => {
       told = rung
       $.ui.toast(
         rung === 'critical'
-          ? `router: a rate-limit window is past ${CRITICAL}%; every placed task runs a tier down`
-          : `router: a rate-limit window is past ${TIGHT}%; tasks with no signal run a tier down`,
+          ? `downshift: a rate-limit window is past ${CRITICAL}%; every placed task runs a tier down`
+          : `downshift: a rate-limit window is past ${TIGHT}%; tasks with no signal run a tier down`,
       )
     }
 

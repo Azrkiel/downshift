@@ -1,10 +1,13 @@
 {
-  "name": "model-router",
-  "version": "0.4.0",
-  "description": "Routes each subagent to the cheapest model that fits its task: haiku for web and lookup work, sonnet for building, opus for architecture.",
+  "name": "downshift",
+  "version": "0.5.0",
+  "description": "Model routing for Claude Code. Runs each subagent on the cheapest model that fits its task: haiku for web and lookup work, sonnet for building, opus for architecture.",
   "author": {
     "name": "Azrkiel"
   },
+  "homepage": "https://github.com/Azrkiel/downshift-plugin",
+  "repository": "https://github.com/Azrkiel/downshift-plugin",
+  "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
     "fallback": {
@@ -53,8 +56,8 @@
     },
     "budgetShift": {
       "type": "boolean",
-      "title": "Rate-limit downshift",
-      "description": "Past 75% of a rate-limit window, tasks with no signal run one tier down; past 90%, every task the router places by its words does.",
+      "title": "Rate-limit protection",
+      "description": "Past 75% of a rate-limit window, tasks with no signal run one tier down; past 90%, every task the mod places by its words does.",
       "default": true
     }
   }
